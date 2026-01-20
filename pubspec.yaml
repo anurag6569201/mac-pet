@@ -1,0 +1,21 @@
+name: mac_pet
+description: A DeskPet-like desktop pet application for macOS
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: false
+  assets:
+    - assets/pet_sprite.png
