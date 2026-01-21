@@ -42,10 +42,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.isOpaque = false
         window.hasShadow = false
         
-        // Set window level to the highest possible level to ensure it's always on top
-        // Using a custom level higher than screenSaver (1000) to be above everything
-        let screenSaverLevel = Int(CGWindowLevelForKey(.screenSaverWindow))
-        window.level = NSWindow.Level(rawValue: screenSaverLevel + 1)
+        // Set window level to floating
+        window.level = .floating
         
         // Collection behavior for cross-space and fullscreen support
         window.collectionBehavior = [
