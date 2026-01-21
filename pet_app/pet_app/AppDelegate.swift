@@ -16,15 +16,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Hide dock icon and Cmd+Tab
         NSApp.setActivationPolicy(.accessory)
         
-        // Get all screens and calculate combined frame covering entire Mac display area
+        // Get all screens and calculate combined frame
         let screens = NSScreen.screens
+        guard let mainScreen = NSScreen.main else { return }
         
-        // Calculate the bounding frame that covers all screens
-        // Start with the first screen's frame
-        guard let firstScreen = screens.first else { return }
-        var combinedFrame = firstScreen.frame
-        
-        // Union all screen frames to get the complete bounding rectangle
+        // Calculate frame covering all screens
+        var combinedFrame = mainScreen.frame
         for screen in screens {
             combinedFrame = combinedFrame.union(screen.frame)
         }
@@ -32,7 +29,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Create the SwiftUI view
         let contentView = OverlayView()
         
-        // Create the window covering all screens with full Mac screen size
+        // Create the window covering all screens
         let window = NSWindow(
             contentRect: combinedFrame,
             styleMask: [.borderless],
@@ -69,8 +66,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Set content view
         window.contentView = NSHostingView(rootView: contentView)
         
-        // Position window to cover complete Mac screen size (all displays)
-        window.setFrame(combinedFrame, display: true, animate: false)
+        // Position window to cover all screens
+        window.setFrame(combinedFrame, display: true)
         
         // Make window visible and ensure it's on top
         window.makeKeyAndOrderFront(nil)

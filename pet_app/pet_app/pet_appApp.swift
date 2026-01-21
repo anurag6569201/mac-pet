@@ -1,19 +1,21 @@
 //
-//  mac_petApp.swift
-//  mac-pet
+//  pet_appApp.swift
+//  pet_app
 //
-//  Created by Anurag singh on 21/01/26.
+//  Created by Anurag singh on 22/01/26.
 //
 
 import SwiftUI
 
 @main
-struct mac_petApp: App {
+struct pet_appApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    
+
     var body: some Scene {
+        // No windows needed here as they are managed by AppDelegate
         Settings {
             EmptyView()
         }
     }
 }
+
