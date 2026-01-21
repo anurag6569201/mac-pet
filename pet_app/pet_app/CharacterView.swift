@@ -11,7 +11,7 @@ struct CharacterView: NSViewRepresentable {
         // ✅ Always include Assets.scnassets/
         let scene = SCNScene(named: "Assets.scnassets/character.dae")
 
-        // Force texture binding (fixes black / white model)
+        // Force texture binding
         scene?.rootNode.enumerateChildNodes { node, _ in
             if let material = node.geometry?.firstMaterial {
                 // Try loading from Assets.scnassets/ if normal named loading fails
@@ -22,13 +22,16 @@ struct CharacterView: NSViewRepresentable {
                 material.lightingModel = .physicallyBased
             }
             // Scale and adjustment
-            // node.scale = SCNVector3(0.6, 0.6, 0.6)
+            node.scale = SCNVector3(0.1, 0.1, 0.1)
+            
+            // Adjust position down significantly to align feet with bottom of view
+            // Increased negative Y value to push character down more
+            node.position = SCNVector3(0, -1.5, 0)
         }
 
         view.scene = scene
         view.autoenablesDefaultLighting = true
         view.isPlaying = true
-        view.allowsCameraControl = true // Temporarily enable for debugging visibility
         return view
     }
 

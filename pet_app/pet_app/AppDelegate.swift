@@ -16,22 +16,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Hide dock icon and Cmd+Tab
         NSApp.setActivationPolicy(.accessory)
         
-        // Get all screens and calculate combined frame
-        let screens = NSScreen.screens
+        // Get main screen - use visibleFrame for fullscreen-like behavior
         guard let mainScreen = NSScreen.main else { return }
         
-        // Calculate frame covering all screens
-        var combinedFrame = mainScreen.frame
-        for screen in screens {
-            combinedFrame = combinedFrame.union(screen.frame)
-        }
+        // Use visibleFrame which gives us the fullscreen area (excluding menu bar/dock)
+        // For true fullscreen coverage, use frame instead
+        let screenFrame = mainScreen.frame
         
         // Create the SwiftUI view
         let contentView = OverlayView()
         
-        // Create the window covering all screens
+        // Create the window with fullscreen size
         let window = NSWindow(
-            contentRect: combinedFrame,
+            contentRect: screenFrame,
             styleMask: [.borderless],
             backing: .buffered,
             defer: false
@@ -42,19 +39,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.isOpaque = false
         window.hasShadow = false
         
-        // Set window level to floating
+        // Set window level to floating to stay on top
         window.level = .floating
         
-        // Collection behavior for cross-space and fullscreen support
+        // Collection behavior for fullscreen-like overlay
         window.collectionBehavior = [
-            .canJoinAllSpaces,        // Appear on all Spaces
             .fullScreenAuxiliary,     // Appear above fullscreen apps
+            .canJoinAllSpaces,        // Appear on all Spaces
             .stationary,              // Don't move with Spaces
             .ignoresCycle             // Don't appear in window cycling
         ]
-        
-        // Ensure window stays on top even when other windows are created
-        window.orderFrontRegardless()
         
         // Make window ignore mouse events (click-through)
         window.ignoresMouseEvents = true
@@ -64,8 +58,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Set content view
         window.contentView = NSHostingView(rootView: contentView)
         
-        // Position window to cover all screens
-        window.setFrame(combinedFrame, display: true)
+        // Position window to cover full screen
+        window.setFrame(screenFrame, display: true)
         
         // Make window visible and ensure it's on top
         window.makeKeyAndOrderFront(nil)
