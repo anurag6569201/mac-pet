@@ -9,14 +9,19 @@ import SwiftUI
 
 struct OverlayView: View {
     var body: some View {
-        ZStack {
-            // Completely transparent background
-            Color.clear
-            
-            // Centered text
-            Text("HELLO OVERLAY")
-                .font(.system(size: 72, weight: .bold))
-                .foregroundColor(.white)
+        GeometryReader { geometry in
+            ZStack {
+                // Completely transparent background covering full screen
+                Color.clear
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                
+                // SceneKit character view positioned in bottom-right corner
+                // Adjust position and size as needed
+                CharacterView()
+                    .frame(width: 300, height: 300)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                    .padding(20)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.clear)
