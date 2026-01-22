@@ -10,14 +10,14 @@ import SwiftUI
 struct OverlayView: View {
     var body: some View {
         GeometryReader { geometry in
-            ZStack(alignment: .bottomTrailing) {
+            ZStack {
                 // Completely transparent background covering full screen
                 Color.clear
                     .frame(width: geometry.size.width, height: geometry.size.height)
                 
-                // Character View - aligned to bottom trailing with no padding
-                CharacterView()
-                    .frame(width: 300, height: 300)
+                // Character View - now covering full screen for 3D coordinate mapping
+                CharacterView(size: geometry.size)
+                    .frame(width: geometry.size.width, height: geometry.size.height)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
