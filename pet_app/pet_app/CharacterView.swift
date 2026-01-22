@@ -9,7 +9,7 @@ struct CharacterView: NSViewRepresentable {
         view.backgroundColor = .clear
 
         // Load .dae correctly in SceneKit
-        let scene = SCNScene(named: "Assets.scnassets/character.dae") ?? SCNScene()
+        let scene = SCNScene(named: PetConfig.characterModel) ?? SCNScene()
 
         // Create a root node for the character to make positioning easier
         let characterNode = SCNNode()
@@ -17,14 +17,14 @@ struct CharacterView: NSViewRepresentable {
         // Force texture binding and add to characterNode
         scene.rootNode.enumerateChildNodes { node, _ in
             if let material = node.geometry?.firstMaterial {
-                if let image = NSImage(named: "diffuse.png") ?? NSImage(contentsOfFile: Bundle.main.path(forResource: "diffuse", ofType: "png", inDirectory: "Assets.scnassets") ?? "") {
+                if let image = NSImage(named: PetConfig.diffuseTexture) ?? NSImage(contentsOfFile: Bundle.main.path(forResource: PetConfig.diffuseTexture.replacingOccurrences(of: ".png", with: ""), ofType: "png", inDirectory: PetConfig.assetsDirectory) ?? "") {
                     material.diffuse.contents = image
                 }
                 material.isDoubleSided = true
                 material.lightingModel = .physicallyBased
             }
             // Scale
-            node.scale = SCNVector3(0.8, 0.8, 0.8)
+            node.scale = PetConfig.characterScale
         }
         
         // Move all children to characterNode
@@ -50,45 +50,28 @@ struct CharacterView: NSViewRepresentable {
         
         view.pointOfView = cameraNode
 
-        // Position character: example - starting from right
-        characterNode.position = SCNVector3(size.width, 50, 0)
-        
-        // Rotate character to face left (sideway walk)
-        // Since the character likely faces forward by default (Z+), rotating -90 degrees (or 270) around Y makes it face X- (left)
-        characterNode.eulerAngles.y = -.pi / 2
+        // Initialize Animations
+        let walkingAnimation = WalkingAnimation.setup(for: characterNode)
+        let landingAnimation = LandingAnimation.setup(for: characterNode, walkingAnimation: walkingAnimation)
+        let doorAnimation = DoorAnimation.setup(for: characterNode)
 
-        // Load and Apply Animation from normal-walking.dae - Node Matching
-        if let animationScene = SCNScene(named: "Assets.scnassets/normal-walking.dae") {
-            // Function to recursively add animations matching node names
-            func addAnimations(from sourceNode: SCNNode, to targetRoot: SCNNode) {
-                for key in sourceNode.animationKeys {
-                    if let player = sourceNode.animationPlayer(forKey: key) {
-                        // Find corresponding node in character hierarchy
-                        let targetNode = targetRoot.childNode(withName: sourceNode.name ?? "", recursively: true) ?? targetRoot
-                        
-                        // Create a new player to avoid referencing the old scene
-                        let newPlayer = SCNAnimationPlayer(animation: player.animation)
-                        newPlayer.animation.repeatCount = .infinity
-                        newPlayer.animation.isRemovedOnCompletion = false
-                        newPlayer.play()
-                        
-                        targetNode.addAnimationPlayer(newPlayer, forKey: key)
-                    }
-                }
-                
-                for child in sourceNode.childNodes {
-                    addAnimations(from: child, to: targetRoot)
+        // Starting values from Config
+        let startPos = PetConfig.startPos(for: size)
+        let groundPos = PetConfig.groundPos(for: size)
+        let finalPos = PetConfig.finalPos(for: size)
+        let speed = PetConfig.walkSpeed
+
+        // Run Landing -> Walking sequence
+        landingAnimation.run(startPos: startPos, groundPos: groundPos, finalPos: finalPos, walkSpeed: speed) {
+            // Patrol/Explore: After landing and walking to finalPos, walk back to a middle point
+            let patrolPos = SCNVector3(size.width / 2, 50, 0)
+            walkingAnimation.run(from: finalPos, to: patrolPos, speed: speed) {
+                print("Patrol complete!")
+                doorAnimation.run {
+                    print("Door animation complete!")
                 }
             }
-            
-            addAnimations(from: animationScene.rootNode, to: characterNode)
         }
-        
-        // Add movement logic: walk from right to left
-        let moveLeft = SCNAction.move(to: SCNVector3(-100, 50, 0), duration: 8.63)
-        let resetPos = SCNAction.move(to: SCNVector3(size.width + 100, 50, 0), duration: 0)
-        let sequence = SCNAction.sequence([moveLeft, resetPos])
-        characterNode.runAction(SCNAction.repeatForever(sequence))
 
         view.scene = scene
         view.autoenablesDefaultLighting = true
