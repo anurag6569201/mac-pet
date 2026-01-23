@@ -8,24 +8,33 @@
 import SwiftUI
 
 struct OverlayView: View {
+    let desktopCount: Int
+    let xOffset: CGFloat
+    
     var body: some View {
         GeometryReader { geometry in
+            let screenWidth = geometry.size.width
+            let fullWidth = screenWidth * CGFloat(desktopCount)
+            
             ZStack {
-                // Completely transparent background covering full screen
-                Color.clear
-                    .frame(width: geometry.size.width, height: geometry.size.height)
+                // Red background with 0.1 opacity covering full extended width
+                Color.red.opacity(0.1)
+                    .frame(width: fullWidth, height: geometry.size.height)
+                    .offset(x: xOffset)
                 
-                // Character View - now covering full screen for 3D coordinate mapping
-                CharacterView(size: geometry.size)
-                    .frame(width: geometry.size.width, height: geometry.size.height)
+                // Character View - covering full extended width for 3D coordinate mapping
+                CharacterView(size: CGSize(width: fullWidth, height: geometry.size.height))
+                    .frame(width: fullWidth, height: geometry.size.height)
+                    .offset(x: xOffset)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.clear)
+        .background(Color.red.opacity(0.1))
+        .clipped() // Overflow hidden
         .ignoresSafeArea(.all)
     }
 }
 
 #Preview {
-    OverlayView()
+    OverlayView(desktopCount: 3, xOffset: 0)
 }

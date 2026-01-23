@@ -2,16 +2,28 @@ import Foundation
 
 /// Yabai Space Model for JSON Parsing
 struct YabaiSpace: Codable {
+    let id: Int
+    let uuid: String
     let index: Int
-    let hasFocus: Bool
-    let isNativeFullscreen: Bool
+    let label: String
+    let type: String
+    let display: Int
     let windows: [Int]
+    let hasFocus: Bool
+    let isVisible: Bool
+    let isNativeFullscreen: Bool
     
     enum CodingKeys: String, CodingKey {
+        case id
+        case uuid
         case index
-        case hasFocus = "has-focus"
-        case isNativeFullscreen = "is-native-fullscreen"
+        case label
+        case type
+        case display
         case windows
+        case hasFocus = "has-focus"
+        case isVisible = "is-visible"
+        case isNativeFullscreen = "is-native-fullscreen"
     }
 }
 
@@ -35,6 +47,79 @@ class YabaiAutomation {
         
         // 2. Setup Signals (Realtime Verification)
         setupRealtimeVerification()
+    }
+    
+    func getDesktopCount() -> Int {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: yabaiPath)
+        process.arguments = ["-m", "query", "--spaces"]
+        
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        
+        do {
+            try process.run()
+            process.waitUntilExit()
+            
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            
+            if process.terminationStatus == 0 {
+                do {
+                    let spaces = try JSONDecoder().decode([YabaiSpace].self, from: data)
+                    return spaces.count
+                } catch {
+                    print(" [YabaiError] JSON Parsing Failed: \(error)")
+                    return 1
+                }
+            } else {
+                return 1
+            }
+        } catch {
+            print(" [YabaiError] Failed to execute process: \(error)")
+            return 1
+        }
+    }
+    
+    func getAllSpaces() -> [YabaiSpace] {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: yabaiPath)
+        process.arguments = ["-m", "query", "--spaces"]
+        
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        
+        do {
+            try process.run()
+            process.waitUntilExit()
+            
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            
+            if process.terminationStatus == 0 {
+                do {
+                    let spaces = try JSONDecoder().decode([YabaiSpace].self, from: data)
+                    return spaces
+                } catch {
+                    print(" [YabaiError] JSON Parsing Failed: \(error)")
+                    return []
+                }
+            } else {
+                return []
+            }
+        } catch {
+            print(" [YabaiError] Failed to execute process: \(error)")
+            return []
+        }
+    }
+    
+    func moveWindowToSpace(windowId: Int, spaceIndex: Int) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: yabaiPath)
+        process.arguments = ["-m", "window", "--warp", "space:\(spaceIndex)"]
+        
+        // Note: This requires the window ID, but we'll use a different approach
+        // We'll use the window's accessibility identifier or try a different method
     }
     
     // MARK: - Query Logic
