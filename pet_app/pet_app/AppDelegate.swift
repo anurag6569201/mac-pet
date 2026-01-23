@@ -13,6 +13,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var keepOnTopTimer: Timer?
     
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Start Yabai verification sequence
+        YabaiAutomation.shared.startVerification()
+        
         // Hide dock icon and Cmd+Tab
         NSApp.setActivationPolicy(.accessory)
         
@@ -43,12 +46,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.level = .floating
         
         // Collection behavior for fullscreen-like overlay
+        // Stay on the desktop where it was created (last desktop), don't move to other Spaces
         window.collectionBehavior = [
             .fullScreenAuxiliary,     // Appear above fullscreen apps
-            .canJoinAllSpaces,        // Appear on all Spaces
-            .stationary,              // Don't move with Spaces
             .ignoresCycle             // Don't appear in window cycling
         ]
+        // Note: Without .canJoinAllSpaces or .moveToActiveSpace, 
+        // the window stays on the Space where it was created
         
         // Make window ignore mouse events (click-through)
         window.ignoresMouseEvents = true
