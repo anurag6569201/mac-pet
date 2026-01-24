@@ -11,14 +11,22 @@ struct WalkingAnimation {
     
     func playAction() -> SCNAction {
         return SCNAction.run { _ in
-            self.walkingPlayers.forEach { $0.play() }
+            self.start()
         }
     }
     
     func stopAction() -> SCNAction {
         return SCNAction.run { _ in
-            self.walkingPlayers.forEach { $0.stop() }
+            self.stop()
         }
+    }
+    
+    func start() {
+        self.walkingPlayers.forEach { $0.play() }
+    }
+    
+    func stop() {
+        self.walkingPlayers.forEach { $0.stop() }
     }
     
     func moveAction(from start: SCNVector3, to end: SCNVector3, speed: CGFloat) -> SCNAction {

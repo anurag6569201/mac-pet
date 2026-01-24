@@ -110,7 +110,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let screenFrame = mainScreen.frame // This is the size of ONE screen
         
         // Calculate desktop index (0-based)
+        // Calculate desktop index (0-based)
         let desktopIndex = currentSpaceIndex - 1
+        
+        // Update the Shared PetController Active Desktop State
+        // This ensures the pet follows the mouse on THIS active desktop
+        PetController.shared.activeDesktopIndex = desktopIndex
         
         // Create the SwiftUI view for this specific desktop slice
         // We pass the desktop index so it knows which part of the world to show

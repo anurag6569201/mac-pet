@@ -13,7 +13,14 @@ class PetController {
     private var landingAnimation: LandingAnimation?
     private var doorAnimation: DoorAnimation?
     
+    private var startSequenceHasRun = false
+    private var lastUpdateTime: TimeInterval = 0
+    private var isWalking = false
+    
     private var isConfigured = false
+    
+    // Centralized Active Desktop State
+    var activeDesktopIndex: Int = 0
     
     private init() {
         // Initialize Scene and Nodes
@@ -30,7 +37,59 @@ class PetController {
         // Setup shared logic (animations, etc)
         // Note: Camera is now set up per-view
         setupAnimations()
-        startSequence(size: size)
+        
+        // Initial Position
+        characterNode.position = PetConfig.groundPos(for: size)
+        
+        // startSequence(size: size) // Disabled for mouse following
+    }
+    
+    func update(atTime time: TimeInterval, screenSize: CGSize) {
+        if lastUpdateTime == 0 {
+            lastUpdateTime = time
+            return
+        }
+        let deltaTime = time - lastUpdateTime
+        lastUpdateTime = time
+        
+        // Mouse Following Logic
+        let mouseLoc = NSEvent.mouseLocation
+        
+        // Use centralized activeDesktopIndex to determine the target world position.
+        // We ignore the view's desktopIndex because only the active one matters for following
+        // (Assuming the user wants the pet to come to the active screen)
+        
+        let screenWidth = screenSize.width
+        let worldOffsetX = CGFloat(activeDesktopIndex) * screenWidth
+        
+        let targetX = worldOffsetX + mouseLoc.x
+        
+        let currentX = characterNode.position.x
+        let dx = targetX - currentX
+        
+        let threshold: CGFloat = 5.0
+        
+        if abs(dx) > threshold {
+            if !isWalking {
+                walkingAnimation?.start()
+                isWalking = true
+            }
+            
+            // Face direction
+            characterNode.eulerAngles.y = dx > 0 ? .pi / 2 : -.pi / 2
+            
+            let distance = PetConfig.walkSpeed * CGFloat(deltaTime)
+            if distance < abs(dx) {
+                characterNode.position.x += distance * (dx > 0 ? 1 : -1)
+            } else {
+                characterNode.position.x = targetX
+            }
+        } else {
+            if isWalking {
+                walkingAnimation?.stop()
+                isWalking = false
+            }
+        }
     }
     
     private func setupSceneContent() {

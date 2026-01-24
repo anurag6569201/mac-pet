@@ -69,12 +69,21 @@ struct CharacterView: NSViewRepresentable {
         
         return view
     }
-    
     func makeCoordinator() -> Coordinator {
-        Coordinator()
+        Coordinator(parent: self)
     }
     
     class Coordinator: NSObject, SCNSceneRendererDelegate {
+        let parent: CharacterView
+        
+        init(parent: CharacterView) {
+            self.parent = parent
+        }
+        
+        func renderer(_ renderer: SCNSceneRenderer, updateAtTime time: TimeInterval) {
+            PetController.shared.update(atTime: time, screenSize: parent.size)
+        }
+
         func renderer(_ renderer: SCNSceneRenderer, didApplyAnimationsAtTime time: TimeInterval) {
             // Find the Hips/Root node and lock it to prevent root motion
             // We use the shared scene from the renderer
