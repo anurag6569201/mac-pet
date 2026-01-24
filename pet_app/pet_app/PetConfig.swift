@@ -5,10 +5,14 @@ struct PetConfig {
     static let characterScale = SCNVector3(0.8, 0.8, 0.8)
     
     // MARK: - Animation Speeds & Durations
-    static let walkSpeed: CGFloat = 180.0
+    static let walkSpeed: CGFloat = 130.0
+    static let runSpeed: CGFloat = 550.0
+    static let slowRunSpeed: CGFloat = 380.0
+
     static let fallDuration: TimeInterval = 1.0
     static let standUpDuration: TimeInterval = 1.0
     static let overlapDuration: TimeInterval = 0.5
+    static let transitionDuration: CGFloat = 0.3
     
     // MARK: - Positions
     static func startPos(for size: CGSize) -> SCNVector3 {
@@ -30,4 +34,6 @@ struct PetConfig {
     static let walkingAnimationFile = "normal-walking.dae"
     static let landingAnimationFile = "landing.dae"
     static let doorAnimationFile = "opening-closing-door.dae"
+    static let fastRunAnimationFile = "fast-run.dae"
+    static let slowRunAnimationFile = "slow-run.dae"
 }

@@ -10,12 +10,16 @@ class PetController {
     
     // Animations
     private var walkingAnimation: WalkingAnimation?
+    private var fastRunAnimation: FastRunAnimation?
+    private var slowRunAnimation: SlowRunAnimation?
     private var landingAnimation: LandingAnimation?
     private var doorAnimation: DoorAnimation?
     
     private var startSequenceHasRun = false
     private var lastUpdateTime: TimeInterval = 0
     private var isWalking = false
+    private var isRunning = false
+    private var isSlowRunning = false
     
     private var isConfigured = false
     
@@ -126,19 +130,56 @@ class PetController {
         let teleportThreshold: CGFloat = 1000.0 // Teleport if > 1000 units away (approx < 1 screen width but instant feel)
         
         if abs(dx) > threshold {
-            // Standard Walking Logic
-            if !isWalking {
-                walkingAnimation?.start()
-                isWalking = true
+            let distance = abs(dx)
+            
+            if distance > 500 {
+                // FAST RUN
+                if isWalking { walkingAnimation?.stop(); isWalking = false }
+                if isSlowRunning { slowRunAnimation?.stop(); isSlowRunning = false }
+                
+                if !isRunning {
+                    fastRunAnimation?.start()
+                    isRunning = true
+                }
+            } else if distance > 200 {
+                // SLOW RUN
+                if isWalking { walkingAnimation?.stop(); isWalking = false }
+                if isRunning { fastRunAnimation?.stop(); isRunning = false }
+                
+                if !isSlowRunning {
+                    slowRunAnimation?.start()
+                    isSlowRunning = true
+                }
+            } else {
+                // WALK
+                if isRunning { fastRunAnimation?.stop(); isRunning = false }
+                if isSlowRunning { slowRunAnimation?.stop(); isSlowRunning = false }
+                
+                if !isWalking {
+                    walkingAnimation?.start()
+                    isWalking = true
+                }
             }
             
             // Face direction
             characterNode.eulerAngles.y = dx > 0 ? .pi / 2 : -.pi / 2
             
-            let distance = PetConfig.walkSpeed * CGFloat(deltaTime)
-            if distance < abs(dx) {
-                characterNode.position.x += distance * (dx > 0 ? 1 : -1)
+            // Determine speed
+            let moveSpeed: CGFloat
+            if distance > 500 {
+                moveSpeed = PetConfig.runSpeed
+            } else if distance > 200 {
+                moveSpeed = PetConfig.slowRunSpeed
             } else {
+                moveSpeed = PetConfig.walkSpeed
+            }
+            
+            let moveDistance = moveSpeed * CGFloat(deltaTime)
+            
+            if moveDistance < abs(dx) {
+                characterNode.position.x += moveDistance * (dx > 0 ? 1 : -1)
+            } else {
+                // Arrived
                 characterNode.position.x = targetX
             }
             
@@ -147,10 +188,10 @@ class PetController {
                 characterNode.position.x = max(0, min(characterNode.position.x, worldSize.width))
             }
         } else {
-            if isWalking {
-                walkingAnimation?.stop()
-                isWalking = false
-            }
+            // IDLE
+            if isWalking { walkingAnimation?.stop(); isWalking = false }
+            if isRunning { fastRunAnimation?.stop(); isRunning = false }
+            if isSlowRunning { slowRunAnimation?.stop(); isSlowRunning = false }
         }
     }
     
@@ -261,6 +302,9 @@ class PetController {
     
     private func setupAnimations() {
         walkingAnimation = WalkingAnimation.setup(for: characterNode)
+        fastRunAnimation = FastRunAnimation.setup(for: characterNode)
+        slowRunAnimation = SlowRunAnimation.setup(for: characterNode)
+        
         if let walking = walkingAnimation {
             landingAnimation = LandingAnimation.setup(for: characterNode, walkingAnimation: walking)
         }

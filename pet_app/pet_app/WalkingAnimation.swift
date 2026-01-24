@@ -26,7 +26,7 @@ struct WalkingAnimation {
     }
     
     func stop() {
-        self.walkingPlayers.forEach { $0.stop() }
+        self.walkingPlayers.forEach { $0.stop(withBlendOutDuration: PetConfig.transitionDuration) }
     }
     
     func moveAction(from start: SCNVector3, to end: SCNVector3, speed: CGFloat) -> SCNAction {
