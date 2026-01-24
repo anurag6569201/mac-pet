@@ -32,8 +32,27 @@ struct PetConfig {
     static let diffuseTexture = "diffuse.png"
     static let assetsDirectory = "Assets.scnassets"
     static let walkingAnimationFile = "normal-walking.dae"
-    static let landingAnimationFile = "landing.dae"
-    static let doorAnimationFile = "opening-closing-door.dae"
     static let fastRunAnimationFile = "fast-run.dae"
     static let slowRunAnimationFile = "slow-run.dae"
+    static let lookAroundAnimationFile = "look-around.dae"
+    static let idleBreathingAnimationFile = "idle-looking.dae"
+    static let armStretchAnimationFile = "arm-stretching.dae"
+    static let neckStretchAnimationFile = "neck-stretching.dae"
+    static let yawnAnimationFile = "Yawn.dae"
+    
+    // MARK: - Idle Animation Settings
+    static let idleTimeout: TimeInterval = 5.0
+    static let rotationTransitionDuration: TimeInterval = 5.0
+    
+    // Look Around Settings
+    static let lookAroundMinInterval: TimeInterval = 5.0
+    static let lookAroundMaxInterval: TimeInterval = 10.0
+    
+    // Long Idle Settings (Stretch/Yawn)
+    static let longIdleTimeout: TimeInterval = 30.0
+    
+    // Random Scratch Settings
+    static let scratchCheckInterval: TimeInterval = 3.0
+    static let scratchChance: Double = 0.15 // 15% chance per check
 }
+

@@ -12,14 +12,26 @@ class PetController {
     private var walkingAnimation: WalkingAnimation?
     private var fastRunAnimation: FastRunAnimation?
     private var slowRunAnimation: SlowRunAnimation?
-    private var landingAnimation: LandingAnimation?
-    private var doorAnimation: DoorAnimation?
+    private var lookAroundAnimation: LookAroundAnimation?
+    private var idleBreathingAnimation: IdleBreathingAnimation?
+    private var armStretchAnimation: ArmStretchAnimation?
+    private var neckStretchAnimation: NeckStretchAnimation?
+    private var yawnAnimation: YawnAnimation?
     
     private var startSequenceHasRun = false
     private var lastUpdateTime: TimeInterval = 0
     private var isWalking = false
     private var isRunning = false
     private var isSlowRunning = false
+    
+    // Idle Animation State
+    private var lastActivityTime: TimeInterval = 0
+    private var isIdleBreathing = false
+    private var isLookingAround = false
+    private var isPerformingLongIdle = false // For stretch/yawn animations
+    private var nextLookAroundTime: TimeInterval = 0
+    private var nextScratchCheckTime: TimeInterval = 0
+    private var longIdleTriggered = false
     
     private var isConfigured = false
     
@@ -130,6 +142,14 @@ class PetController {
         let teleportThreshold: CGFloat = 1000.0 // Teleport if > 1000 units away (approx < 1 screen width but instant feel)
         
         if abs(dx) > threshold {
+            // PRIORITY 1: MOVEMENT ANIMATIONS - Always override idle animations
+            // Forcefully stop ALL idle animations immediately
+            stopAllIdleAnimations()
+            
+            // Reset idle timers
+            lastActivityTime = time
+            longIdleTriggered = false
+            
             let distance = abs(dx)
             
             if distance > 500 {
@@ -188,10 +208,155 @@ class PetController {
                 characterNode.position.x = max(0, min(characterNode.position.x, worldSize.width))
             }
         } else {
-            // IDLE
+            // PRIORITY 2: IDLE ANIMATIONS - Only play when not moving
+            // First, ensure all movement animations are stopped
             if isWalking { walkingAnimation?.stop(); isWalking = false }
             if isRunning { fastRunAnimation?.stop(); isRunning = false }
             if isSlowRunning { slowRunAnimation?.stop(); isSlowRunning = false }
+            
+            // Double-check: If any movement animation is still active, don't play idle animations
+            if isWalking || isRunning || isSlowRunning {
+                return
+            }
+            
+            let idleTime = time - lastActivityTime
+            
+            // Start idle breathing if not already playing and no other idle animation is active
+            if !isIdleBreathing && !isLookingAround && !isPerformingLongIdle {
+                isIdleBreathing = true
+                idleBreathingAnimation?.start()
+            }
+            
+            // Initialize next look-around time if needed
+            if nextLookAroundTime == 0 {
+                nextLookAroundTime = time + Double.random(in: PetConfig.lookAroundMinInterval...PetConfig.lookAroundMaxInterval)
+            }
+            
+            // Initialize next scratch check time if needed
+            if nextScratchCheckTime == 0 {
+                nextScratchCheckTime = time + PetConfig.scratchCheckInterval
+            }
+            
+            // Check for long idle animations (stretch/yawn) - highest priority
+            if idleTime >= PetConfig.longIdleTimeout && !longIdleTriggered && !isPerformingLongIdle {
+                longIdleTriggered = true
+                isPerformingLongIdle = true
+                
+                // Stop other idle animations
+                if isIdleBreathing {
+                    idleBreathingAnimation?.stop()
+                    isIdleBreathing = false
+                }
+                if isLookingAround {
+                    lookAroundAnimation?.stop()
+                    isLookingAround = false
+                }
+                
+                // Randomly select stretch or yawn animation
+                let randomChoice = Int.random(in: 0...2)
+                
+                // Smoothly rotate to face forward
+                let rotateAction = SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: PetConfig.rotationTransitionDuration)
+                rotateAction.timingMode = .easeInEaseOut
+                
+                characterNode.runAction(rotateAction) { [weak self] in
+                    guard let self = self else { return }
+                    
+                    switch randomChoice {
+                    case 0:
+                        self.armStretchAnimation?.start()
+                    case 1:
+                        self.neckStretchAnimation?.start()
+                    default:
+                        self.yawnAnimation?.start()
+                    }
+                    
+                    // Return to idle breathing after animation completes (estimate 3 seconds)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                        self.isPerformingLongIdle = false
+                        // Only restart idle breathing if character is actually still idle (not moving)
+                        if !self.isIdleBreathing && !self.isLookingAround && !self.isWalking && !self.isRunning && !self.isSlowRunning {
+                            self.isIdleBreathing = true
+                            self.idleBreathingAnimation?.start()
+                        }
+                    }
+                }
+            }
+            // Check for random scratch animation
+            else if time >= nextScratchCheckTime && !isPerformingLongIdle && !isLookingAround {
+                nextScratchCheckTime = time + PetConfig.scratchCheckInterval
+                
+                if Double.random(in: 0...1) < PetConfig.scratchChance {
+                    isPerformingLongIdle = true
+                    
+                    // Stop idle breathing
+                    if isIdleBreathing {
+                        idleBreathingAnimation?.stop()
+                        isIdleBreathing = false
+                    }
+                    
+                    // Randomly select arm or neck stretch for scratch
+                    let scratchChoice = Bool.random()
+                    
+                    // Smoothly rotate to face forward
+                    let rotateAction = SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: PetConfig.rotationTransitionDuration)
+                    rotateAction.timingMode = .easeInEaseOut
+                    
+                    characterNode.runAction(rotateAction) { [weak self] in
+                        guard let self = self else { return }
+                        
+                        if scratchChoice {
+                            self.armStretchAnimation?.start()
+                        } else {
+                            self.neckStretchAnimation?.start()
+                        }
+                        
+                        // Return to idle breathing after animation completes
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                            self.isPerformingLongIdle = false
+                            // Only restart idle breathing if character is actually still idle (not moving)
+                            if !self.isIdleBreathing && !self.isLookingAround && !self.isWalking && !self.isRunning && !self.isSlowRunning {
+                                self.isIdleBreathing = true
+                                self.idleBreathingAnimation?.start()
+                            }
+                        }
+                    }
+                }
+            }
+            // Check for look-around animation
+            else if time >= nextLookAroundTime && !isLookingAround && !isPerformingLongIdle {
+                isLookingAround = true
+                
+                // Stop idle breathing
+                if isIdleBreathing {
+                    idleBreathingAnimation?.stop()
+                    isIdleBreathing = false
+                }
+                
+                // Smoothly rotate to face forward
+                let rotateAction = SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: PetConfig.rotationTransitionDuration)
+                rotateAction.timingMode = .easeInEaseOut
+                
+                characterNode.runAction(rotateAction) { [weak self] in
+                    guard let self = self else { return }
+                    self.lookAroundAnimation?.start()
+                    
+                    // Return to idle breathing after look-around completes (estimate 2 seconds)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                        self.lookAroundAnimation?.stop()
+                        self.isLookingAround = false
+                        
+                        // Only restart idle breathing if character is actually still idle (not moving)
+                        if !self.isIdleBreathing && !self.isPerformingLongIdle && !self.isWalking && !self.isRunning && !self.isSlowRunning {
+                            self.isIdleBreathing = true
+                            self.idleBreathingAnimation?.start()
+                        }
+                        
+                        // Schedule next look-around
+                        self.nextLookAroundTime = time + Double.random(in: PetConfig.lookAroundMinInterval...PetConfig.lookAroundMaxInterval)
+                    }
+                }
+            }
         }
     }
     
@@ -304,41 +469,41 @@ class PetController {
         walkingAnimation = WalkingAnimation.setup(for: characterNode)
         fastRunAnimation = FastRunAnimation.setup(for: characterNode)
         slowRunAnimation = SlowRunAnimation.setup(for: characterNode)
-        
-        if let walking = walkingAnimation {
-            landingAnimation = LandingAnimation.setup(for: characterNode, walkingAnimation: walking)
-        }
-        doorAnimation = DoorAnimation.setup(for: characterNode)
+        lookAroundAnimation = LookAroundAnimation.setup(for: characterNode)
+        idleBreathingAnimation = IdleBreathingAnimation.setup(for: characterNode)
+        armStretchAnimation = ArmStretchAnimation.setup(for: characterNode)
+        neckStretchAnimation = NeckStretchAnimation.setup(for: characterNode)
+        yawnAnimation = YawnAnimation.setup(for: characterNode)
     }
     
     private func startSequence(size: CGSize) {
-        guard let landingAnimation = landingAnimation,
-              let walkingAnimation = walkingAnimation,
-              let doorAnimation = doorAnimation else { return }
-
-        // Starting values from Config
-        // Starting values from Config
-        // Force visible start position for testing (Screen 1)
-        let startPos = SCNVector3(300, 200, 0) // Start above screen 1
-        let groundPos = SCNVector3(300, 0, 0)  // Land on screen 1 is better for testing
-        let finalPos = PetConfig.finalPos(for: size)
-        let speed = PetConfig.walkSpeed
-
-
-        // Run Landing -> Walking sequence
-        landingAnimation.run(startPos: startPos, groundPos: groundPos, finalPos: finalPos, walkSpeed: speed) {
-            // Patrol/Explore: After landing and walking to finalPos, walk back to a middle point
-            let patrolPos = SCNVector3(size.width / 2, 0, 0)
-            walkingAnimation.run(from: finalPos, to: patrolPos, speed: speed) {
-                print("Patrol complete!")
-                doorAnimation.run {
-                    print("Door animation complete!")
-                }
-            }
-        }
+        // This function is currently disabled and not used
+        // Mouse following logic is used instead
     }
     
     // MARK: - Helper Methods
+    
+    /// Forcefully stops all idle animations immediately
+    private func stopAllIdleAnimations() {
+        // Cancel any pending rotation actions from idle animations
+        characterNode.removeAllActions()
+        
+        // Stop all idle animation players immediately (no blend)
+        if isIdleBreathing {
+            idleBreathingAnimation?.idleBreathingPlayers.forEach { $0.stop(withBlendOutDuration: 0) }
+            isIdleBreathing = false
+        }
+        if isLookingAround {
+            lookAroundAnimation?.lookAroundPlayers.forEach { $0.stop(withBlendOutDuration: 0) }
+            isLookingAround = false
+        }
+        if isPerformingLongIdle {
+            armStretchAnimation?.armStretchPlayers.forEach { $0.stop(withBlendOutDuration: 0) }
+            neckStretchAnimation?.neckStretchPlayers.forEach { $0.stop(withBlendOutDuration: 0) }
+            yawnAnimation?.yawnPlayers.forEach { $0.stop(withBlendOutDuration: 0) }
+            isPerformingLongIdle = false
+        }
+    }
     
     func updateSpotlightPosition(width: CGFloat, height: CGFloat) {
         // Optional: Update spotlight to center of the total view if needed
