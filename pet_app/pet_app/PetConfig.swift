@@ -40,9 +40,16 @@ struct PetConfig {
     static let neckStretchAnimationFile = "neck-stretching.dae"
     static let yawnAnimationFile = "Yawn.dae"
     
+    // Mouse Behavior Animation Files
+    static let angryEmotionAnimationFile = "mouse_behavior/angry-emotion.dae"
+    static let doubleHandWaveAnimationFile = "mouse_behavior/doublehand-wave.dae"
+    static let oneHandWaveAnimationFile = "mouse_behavior/onehand-wave.dae"
+    static let pointingGestureAnimationFile = "mouse_behavior/pointing-gesture.dae"
+    static let surpriseAnimationFile = "mouse_behavior/surprise.dae"
+    
     // MARK: - Idle Animation Settings
     static let idleTimeout: TimeInterval = 5.0
-    static let rotationTransitionDuration: TimeInterval = 5.0
+    static let rotationTransitionDuration: TimeInterval = 0.5
     
     // Look Around Settings
     static let lookAroundMinInterval: TimeInterval = 5.0
@@ -52,7 +59,32 @@ struct PetConfig {
     static let longIdleTimeout: TimeInterval = 30.0
     
     // Random Scratch Settings
-    static let scratchCheckInterval: TimeInterval = 3.0
-    static let scratchChance: Double = 0.15 // 15% chance per check
+    static let scratchCheckInterval: TimeInterval = 5.0
+    static let scratchChance: Double = 0.05 // 5% chance per check
+    
+    // MARK: - Mouse Behavior Settings
+    // Proximity detection (in screen points)
+    static let mouseProximityNear: CGFloat = 250.0 // For waves and pointing
+    static let mouseProximityClose: CGFloat = 200.0 // For surprise
+    
+    // Velocity tracking (points per second)
+    static let mouseVelocityRapid: CGFloat = 800.0 // For angry emotion
+    static let mouseVelocitySudden: CGFloat = 1500.0 // For surprise (sudden jumps)
+    
+    // Cooldown timers (seconds) - prevent spam
+    static let angryEmotionCooldown: TimeInterval = 8.0
+    static let doubleWaveCooldown: TimeInterval = 10.0
+    static let oneHandWaveCooldown: TimeInterval = 5.0
+    static let pointingCooldown: TimeInterval = 3.0
+    static let surpriseCooldown: TimeInterval = 6.0
+    
+    // Hover detection
+    static let hoverDuration: TimeInterval = 1.0 // How long mouse must hover for one hand wave
+    
+    // Mouse history tracking
+    static let mouseHistorySize: Int = 10 // Number of recent positions to track
+    
+    // MARK: - Mouse Following Settings
+    static let mouseDeadZoneRadius: CGFloat = 200.0 // Minimum distance before pet starts moving
 }
 

@@ -18,6 +18,13 @@ class PetController {
     private var neckStretchAnimation: NeckStretchAnimation?
     private var yawnAnimation: YawnAnimation?
     
+    // Mouse Behavior Animations (PRIORITY 2)
+    private var angryEmotionAnimation: AngryEmotionAnimation?
+    private var doubleHandWaveAnimation: DoubleHandWaveAnimation?
+    private var oneHandWaveAnimation: OneHandWaveAnimation?
+    private var pointingGestureAnimation: PointingGestureAnimation?
+    private var surpriseAnimation: SurpriseAnimation?
+    
     private var startSequenceHasRun = false
     private var lastUpdateTime: TimeInterval = 0
     private var isWalking = false
@@ -31,6 +38,13 @@ class PetController {
     private var isPerformingLongIdle = false // For stretch/yawn animations
     private var nextLookAroundTime: TimeInterval = 0
     private var nextScratchCheckTime: TimeInterval = 0
+    
+    // Mouse Behavior State (PRIORITY 2)
+    private var isPerformingMouseBehavior = false
+    private var mousePositionHistory: [(position: CGPoint, time: TimeInterval)] = []
+    private var lastMouseClickTime: TimeInterval = 0
+    private var mouseHoverStartTime: TimeInterval? = nil
+    private var lastMouseBehaviorTimes: [String: TimeInterval] = [:] // Cooldown tracking
     private var longIdleTriggered = false
     
     private var isConfigured = false
@@ -135,16 +149,20 @@ class PetController {
         
         let targetX = worldOffsetX + localX
         
+        // Update mouse position history for velocity tracking (PRIORITY 2 system)
+        updateMouseHistory(position: CGPoint(x: targetX, y: mouseLoc.y), time: time)
+        
         let currentX = characterNode.position.x
         let dx = targetX - currentX
         
-        let threshold: CGFloat = 5.0
+        let threshold: CGFloat = PetConfig.mouseDeadZoneRadius
         let teleportThreshold: CGFloat = 1000.0 // Teleport if > 1000 units away (approx < 1 screen width but instant feel)
         
         if abs(dx) > threshold {
             // PRIORITY 1: MOVEMENT ANIMATIONS - Always override idle animations
-            // Forcefully stop ALL idle animations immediately
+            // Forcefully stop ALL idle animations and mouse behaviors immediately
             stopAllIdleAnimations()
+            stopAllMouseBehaviors()
             
             // Reset idle timers
             lastActivityTime = time
@@ -208,14 +226,26 @@ class PetController {
                 characterNode.position.x = max(0, min(characterNode.position.x, worldSize.width))
             }
         } else {
-            // PRIORITY 2: IDLE ANIMATIONS - Only play when not moving
+            // Not moving - check for mouse behaviors and idle animations
             // First, ensure all movement animations are stopped
             if isWalking { walkingAnimation?.stop(); isWalking = false }
             if isRunning { fastRunAnimation?.stop(); isRunning = false }
             if isSlowRunning { slowRunAnimation?.stop(); isSlowRunning = false }
             
-            // Double-check: If any movement animation is still active, don't play idle animations
+            // Double-check: If any movement animation is still active, don't play other animations
             if isWalking || isRunning || isSlowRunning {
+                return
+            }
+            
+            // PRIORITY 2: MOUSE BEHAVIORS - Check for mouse interactions
+            // Only check if not already performing a mouse behavior
+            if !isPerformingMouseBehavior {
+                checkMouseBehaviors(mousePos: CGPoint(x: targetX, y: mouseLoc.y), time: time, screenSize: screenSize)
+            }
+            
+            // PRIORITY 3: IDLE ANIMATIONS - Only play when not moving and no mouse behaviors
+            // Don't play idle animations if performing mouse behavior
+            if isPerformingMouseBehavior {
                 return
             }
             
@@ -262,6 +292,12 @@ class PetController {
                 characterNode.runAction(rotateAction) { [weak self] in
                     guard let self = self else { return }
                     
+                    // STRICT PRIORITY CHECK: Don't start animation if movement started during rotation
+                    guard !self.isWalking && !self.isRunning && !self.isSlowRunning else {
+                        self.isPerformingLongIdle = false
+                        return
+                    }
+                    
                     switch randomChoice {
                     case 0:
                         self.armStretchAnimation?.start()
@@ -273,9 +309,15 @@ class PetController {
                     
                     // Return to idle breathing after animation completes (estimate 3 seconds)
                     DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                        // STRICT PRIORITY CHECK: Don't restart idle if movement started
+                        guard !self.isWalking && !self.isRunning && !self.isSlowRunning else {
+                            self.isPerformingLongIdle = false
+                            return
+                        }
+                        
                         self.isPerformingLongIdle = false
                         // Only restart idle breathing if character is actually still idle (not moving)
-                        if !self.isIdleBreathing && !self.isLookingAround && !self.isWalking && !self.isRunning && !self.isSlowRunning {
+                        if !self.isIdleBreathing && !self.isLookingAround {
                             self.isIdleBreathing = true
                             self.idleBreathingAnimation?.start()
                         }
@@ -305,6 +347,12 @@ class PetController {
                     characterNode.runAction(rotateAction) { [weak self] in
                         guard let self = self else { return }
                         
+                        // STRICT PRIORITY CHECK: Don't start animation if movement started during rotation
+                        guard !self.isWalking && !self.isRunning && !self.isSlowRunning else {
+                            self.isPerformingLongIdle = false
+                            return
+                        }
+                        
                         if scratchChoice {
                             self.armStretchAnimation?.start()
                         } else {
@@ -313,9 +361,15 @@ class PetController {
                         
                         // Return to idle breathing after animation completes
                         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                            // STRICT PRIORITY CHECK: Don't restart idle if movement started
+                            guard !self.isWalking && !self.isRunning && !self.isSlowRunning else {
+                                self.isPerformingLongIdle = false
+                                return
+                            }
+                            
                             self.isPerformingLongIdle = false
                             // Only restart idle breathing if character is actually still idle (not moving)
-                            if !self.isIdleBreathing && !self.isLookingAround && !self.isWalking && !self.isRunning && !self.isSlowRunning {
+                            if !self.isIdleBreathing && !self.isLookingAround {
                                 self.isIdleBreathing = true
                                 self.idleBreathingAnimation?.start()
                             }
@@ -339,15 +393,29 @@ class PetController {
                 
                 characterNode.runAction(rotateAction) { [weak self] in
                     guard let self = self else { return }
+                    
+                    // STRICT PRIORITY CHECK: Don't start animation if movement started during rotation
+                    guard !self.isWalking && !self.isRunning && !self.isSlowRunning else {
+                        self.isLookingAround = false
+                        return
+                    }
+                    
                     self.lookAroundAnimation?.start()
                     
                     // Return to idle breathing after look-around completes (estimate 2 seconds)
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                        // STRICT PRIORITY CHECK: Don't restart idle if movement started
+                        guard !self.isWalking && !self.isRunning && !self.isSlowRunning else {
+                            self.lookAroundAnimation?.stop()
+                            self.isLookingAround = false
+                            return
+                        }
+                        
                         self.lookAroundAnimation?.stop()
                         self.isLookingAround = false
                         
                         // Only restart idle breathing if character is actually still idle (not moving)
-                        if !self.isIdleBreathing && !self.isPerformingLongIdle && !self.isWalking && !self.isRunning && !self.isSlowRunning {
+                        if !self.isIdleBreathing && !self.isPerformingLongIdle {
                             self.isIdleBreathing = true
                             self.idleBreathingAnimation?.start()
                         }
@@ -474,6 +542,13 @@ class PetController {
         armStretchAnimation = ArmStretchAnimation.setup(for: characterNode)
         neckStretchAnimation = NeckStretchAnimation.setup(for: characterNode)
         yawnAnimation = YawnAnimation.setup(for: characterNode)
+        
+        // Mouse Behavior Animations
+        angryEmotionAnimation = AngryEmotionAnimation.setup(for: characterNode)
+        doubleHandWaveAnimation = DoubleHandWaveAnimation.setup(for: characterNode)
+        oneHandWaveAnimation = OneHandWaveAnimation.setup(for: characterNode)
+        pointingGestureAnimation = PointingGestureAnimation.setup(for: characterNode)
+        surpriseAnimation = SurpriseAnimation.setup(for: characterNode)
     }
     
     private func startSequence(size: CGSize) {
@@ -488,21 +563,18 @@ class PetController {
         // Cancel any pending rotation actions from idle animations
         characterNode.removeAllActions()
         
-        // Stop all idle animation players immediately (no blend)
-        if isIdleBreathing {
-            idleBreathingAnimation?.idleBreathingPlayers.forEach { $0.stop(withBlendOutDuration: 0) }
-            isIdleBreathing = false
-        }
-        if isLookingAround {
-            lookAroundAnimation?.lookAroundPlayers.forEach { $0.stop(withBlendOutDuration: 0) }
-            isLookingAround = false
-        }
-        if isPerformingLongIdle {
-            armStretchAnimation?.armStretchPlayers.forEach { $0.stop(withBlendOutDuration: 0) }
-            neckStretchAnimation?.neckStretchPlayers.forEach { $0.stop(withBlendOutDuration: 0) }
-            yawnAnimation?.yawnPlayers.forEach { $0.stop(withBlendOutDuration: 0) }
-            isPerformingLongIdle = false
-        }
+        // UNCONDITIONALLY stop ALL idle animation players immediately (no blend)
+        // Don't rely on state flags - just stop everything to be safe
+        idleBreathingAnimation?.idleBreathingPlayers.forEach { $0.stop(withBlendOutDuration: 0) }
+        lookAroundAnimation?.lookAroundPlayers.forEach { $0.stop(withBlendOutDuration: 0) }
+        armStretchAnimation?.armStretchPlayers.forEach { $0.stop(withBlendOutDuration: 0) }
+        neckStretchAnimation?.neckStretchPlayers.forEach { $0.stop(withBlendOutDuration: 0) }
+        yawnAnimation?.yawnPlayers.forEach { $0.stop(withBlendOutDuration: 0) }
+        
+        // Reset all state flags
+        isIdleBreathing = false
+        isLookingAround = false
+        isPerformingLongIdle = false
     }
     
     func updateSpotlightPosition(width: CGFloat, height: CGFloat) {
@@ -510,6 +582,172 @@ class PetController {
         if let spotNode = scene.rootNode.childNodes.first(where: { $0.light?.type == .spot }) {
              spotNode.position = SCNVector3(width / 2, height + 200, 200)
              spotNode.look(at: SCNVector3(width / 2, 0, 0))
+        }
+    }
+    
+    // MARK: - Mouse Behavior Helper Methods
+    
+    /// Stops all mouse behavior animations immediately
+    private func stopAllMouseBehaviors() {
+        // UNCONDITIONALLY stop ALL mouse behavior animation players immediately (no blend)
+        // Don't rely on state flags - just stop everything to be safe
+        angryEmotionAnimation?.angryPlayers.forEach { $0.stop(withBlendOutDuration: 0) }
+        doubleHandWaveAnimation?.doubleWavePlayers.forEach { $0.stop(withBlendOutDuration: 0) }
+        oneHandWaveAnimation?.oneWavePlayers.forEach { $0.stop(withBlendOutDuration: 0) }
+        pointingGestureAnimation?.pointingPlayers.forEach { $0.stop(withBlendOutDuration: 0) }
+        surpriseAnimation?.surprisePlayers.forEach { $0.stop(withBlendOutDuration: 0) }
+        
+        // Reset state flag
+        isPerformingMouseBehavior = false
+        // Reset hover tracking
+        mouseHoverStartTime = nil
+    }
+    
+    /// Updates mouse position history for velocity tracking
+    private func updateMouseHistory(position: CGPoint, time: TimeInterval) {
+        mousePositionHistory.append((position: position, time: time))
+        
+        // Keep only recent history
+        if mousePositionHistory.count > PetConfig.mouseHistorySize {
+            mousePositionHistory.removeFirst()
+        }
+    }
+    
+    /// Calculates current mouse velocity in points per second
+    private func calculateMouseVelocity() -> CGFloat {
+        guard mousePositionHistory.count >= 2 else { return 0 }
+        
+        let recent = mousePositionHistory.suffix(3)
+        guard let first = recent.first, let last = recent.last else { return 0 }
+        
+        let dx = last.position.x - first.position.x
+        let dy = last.position.y - first.position.y
+        let distance = sqrt(dx * dx + dy * dy)
+        let timeDelta = last.time - first.time
+        
+        return timeDelta > 0 ? distance / CGFloat(timeDelta) : 0
+    }
+    
+    /// Calculates distance between mouse and pet
+    private func distanceToPet(mousePos: CGPoint) -> CGFloat {
+        let petX = characterNode.position.x
+        let dx = mousePos.x - petX
+        let dy = mousePos.y - 0 // Pet is on ground (y=0)
+        return sqrt(dx * dx + dy * dy)
+    }
+    
+    /// Checks if enough time has passed since last behavior (cooldown)
+    private func canTriggerBehavior(_ behaviorName: String, cooldown: TimeInterval, currentTime: TimeInterval) -> Bool {
+        guard let lastTime = lastMouseBehaviorTimes[behaviorName] else { return true }
+        return currentTime - lastTime >= cooldown
+    }
+    
+    /// Triggers a mouse behavior animation
+    private func triggerMouseBehavior(_ behaviorName: String, currentTime: TimeInterval, animation: @escaping () -> Void, duration: TimeInterval = 2.0) {
+        // Stop all idle animations
+        stopAllIdleAnimations()
+        
+        // Stop any current mouse behavior
+        stopAllMouseBehaviors()
+        
+        isPerformingMouseBehavior = true
+        lastMouseBehaviorTimes[behaviorName] = currentTime
+        
+        // Face forward for the animation
+        let rotateAction = SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 0.3)
+        rotateAction.timingMode = .easeInEaseOut
+        
+        characterNode.runAction(rotateAction) { [weak self] in
+            guard let self = self else { return }
+            
+            // STRICT PRIORITY CHECK: Don't start animation if movement started during rotation
+            guard !self.isWalking && !self.isRunning && !self.isSlowRunning else {
+                self.isPerformingMouseBehavior = false
+                return
+            }
+            
+            animation()
+            
+            // Return to idle after animation completes
+            DispatchQueue.main.asyncAfter(deadline: .now() + duration) {
+                // STRICT PRIORITY CHECK: Don't change state if movement started
+                guard !self.isWalking && !self.isRunning && !self.isSlowRunning else {
+                    return
+                }
+                
+                self.isPerformingMouseBehavior = false
+                // Reset hover tracking
+                self.mouseHoverStartTime = nil
+            }
+        }
+    }
+    
+    /// Detects and triggers mouse behaviors based on mouse state
+    private func checkMouseBehaviors(mousePos: CGPoint, time: TimeInterval, screenSize: CGSize) {
+        // Don't trigger if already performing a mouse behavior or moving
+        guard !isPerformingMouseBehavior && !isWalking && !isRunning && !isSlowRunning else { return }
+        
+        let distance = distanceToPet(mousePos: mousePos)
+        let velocity = calculateMouseVelocity()
+        
+        // BEHAVIOR 1: Surprise - Sudden mouse jump/teleport
+        if velocity > PetConfig.mouseVelocitySudden && distance < PetConfig.mouseProximityClose {
+            if canTriggerBehavior("surprise", cooldown: PetConfig.surpriseCooldown, currentTime: time) {
+                triggerMouseBehavior("surprise", currentTime: time, animation: {
+                    self.surpriseAnimation?.start()
+                }, duration: 1.5)
+                return
+            }
+        }
+        
+        // BEHAVIOR 2: Angry - Rapid erratic movement near pet
+        if velocity > PetConfig.mouseVelocityRapid && distance < PetConfig.mouseProximityNear {
+            if canTriggerBehavior("angry", cooldown: PetConfig.angryEmotionCooldown, currentTime: time) {
+                triggerMouseBehavior("angry", currentTime: time, animation: {
+                    self.angryEmotionAnimation?.start()
+                }, duration: 2.5)
+                return
+            }
+        }
+        
+        // BEHAVIOR 3: Double Wave - Mouse enters proximity zone
+        if distance < PetConfig.mouseProximityNear && distance > PetConfig.mouseProximityClose {
+            if canTriggerBehavior("doubleWave", cooldown: PetConfig.doubleWaveCooldown, currentTime: time) {
+                triggerMouseBehavior("doubleWave", currentTime: time, animation: {
+                    self.doubleHandWaveAnimation?.start()
+                }, duration: 2.0)
+                return
+            }
+        }
+        
+        // BEHAVIOR 4: One Hand Wave - Mouse hovers near pet
+        if distance < PetConfig.mouseProximityNear {
+            if mouseHoverStartTime == nil {
+                mouseHoverStartTime = time
+            } else if let hoverStart = mouseHoverStartTime, time - hoverStart >= PetConfig.hoverDuration {
+                if canTriggerBehavior("oneWave", cooldown: PetConfig.oneHandWaveCooldown, currentTime: time) {
+                    triggerMouseBehavior("oneWave", currentTime: time, animation: {
+                        self.oneHandWaveAnimation?.start()
+                    }, duration: 1.5)
+                    mouseHoverStartTime = nil
+                    return
+                }
+            }
+        } else {
+            mouseHoverStartTime = nil
+        }
+    }
+    
+    /// Handles mouse click events (call this from a global event monitor if needed)
+    func handleMouseClick(at position: CGPoint, time: TimeInterval) {
+        let distance = distanceToPet(mousePos: position)
+        
+        if distance < PetConfig.mouseProximityNear {
+            if canTriggerBehavior("pointing", cooldown: PetConfig.pointingCooldown, currentTime: time) {
+                triggerMouseBehavior("pointing", currentTime: time, animation: {
+                    self.pointingGestureAnimation?.start()
+                }, duration: 1.5)
+            }
         }
     }
 }
