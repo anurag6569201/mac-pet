@@ -36,6 +36,7 @@ class YabaiAutomation {
     }
     
     private var isListening = false
+    var onSpaceChanged: (() -> Void)?
     
     // MARK: - Public API
     
@@ -219,6 +220,13 @@ class YabaiAutomation {
                         
                         // Re-run query
                         self.runQuery(context: "[YabaiQuery]")
+                        
+                        // Notify about space changes
+                        if trimmedEvent == "space_changed" {
+                            DispatchQueue.main.async {
+                                self.onSpaceChanged?()
+                            }
+                        }
                     }
                     fileHandle.closeFile()
                 } else {
