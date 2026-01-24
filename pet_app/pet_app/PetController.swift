@@ -22,17 +22,43 @@ class PetController {
     // Centralized Active Desktop State
     var activeDesktopIndex: Int = 0
     
+    // Cache of visible spaces per display: [DisplayID (1-based) : SpaceIndex (0-based)]
+    var visibleSpacesByDisplay: [Int: Int] = [:]
+    
     private init() {
         // Initialize Scene and Nodes
         scene = SCNScene(named: PetConfig.characterModel) ?? SCNScene()
         characterNode = SCNNode()
         
         setupSceneContent()
+        
+        // Start periodic refresh of space data
+        Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            self?.refreshVisibleSpaces()
+        }
+        
+        // Initial fetch
+        refreshVisibleSpaces()
     }
     
+    func refreshVisibleSpaces() {
+        DispatchQueue.global(qos: .background).async {
+            let map = YabaiAutomation.shared.getVisibleSpacesMap()
+            DispatchQueue.main.async {
+                self.visibleSpacesByDisplay = map
+                // print(" [PetController] Updated Visible Spaces: \(map)")
+            }
+        }
+    }
+    
+    private var worldSize: CGSize = .zero
+
     func configure(with size: CGSize) {
         guard !isConfigured else { return }
         isConfigured = true
+        self.worldSize = size
+        
+        print(" [PetController] Configured with World Size: \(size)")
         
         // Setup shared logic (animations, etc)
         // Note: Camera is now set up per-view
@@ -55,21 +81,52 @@ class PetController {
         // Mouse Following Logic
         let mouseLoc = NSEvent.mouseLocation
         
-        // Use centralized activeDesktopIndex to determine the target world position.
-        // We ignore the view's desktopIndex because only the active one matters for following
-        // (Assuming the user wants the pet to come to the active screen)
+        // Update visible spaces map periodically (e.g. every second or on-demand?)
+        // Ideally YabaiAutomation calls us when space changes, but for now we lazily update?
+        // Or better: Assume `visibleSpaceByDisplay` is updated by AppDelegate -> PetController
+        // Let's self-update if empty or stale? For minimal lag, let's just query if missing.
+        // But query is slow. Let's rely on cached map updated by Yabai signals.
+        // For now, let's triggers a background refresh if needed.
         
+        // Find which screen the mouse is currently on
+        // NSEvent.mouseLocation is in global screen coordinates
+        var localX: CGFloat = 0
+        var targetSpaceIndex: Int = activeDesktopIndex // Default fallback
+        
+        if let screen = NSScreen.screens.first(where: { NSMouseInRect(mouseLoc, $0.frame, false) }) {
+            // Calculate X relative to that screen's origin
+            localX = mouseLoc.x - screen.frame.minX
+            
+            // infer display index from screen list order (Main is 0 -> Display 1)
+            if let screenIndex = NSScreen.screens.firstIndex(of: screen) {
+                // Determine Display ID (Screen Index + 1 matches Yabai usually)
+                let displayID = screenIndex + 1
+                
+                // Lookup visible space for this display
+                if let visibleSpace = visibleSpacesByDisplay[displayID] {
+                    targetSpaceIndex = visibleSpace
+                }
+            }
+        } else {
+            // Fallback if off-screen (shouldn't happen often)
+            localX = mouseLoc.x.truncatingRemainder(dividingBy: screenSize.width)
+        }
+        
+        // Target is: (Target Space Offset) + (Mouse Position on that Desktop)
+        // Note: We assume all desktops have the same width for simplicity in this grid model
         let screenWidth = screenSize.width
-        let worldOffsetX = CGFloat(activeDesktopIndex) * screenWidth
+        let worldOffsetX = CGFloat(targetSpaceIndex) * screenWidth
         
-        let targetX = worldOffsetX + mouseLoc.x
+        let targetX = worldOffsetX + localX
         
         let currentX = characterNode.position.x
         let dx = targetX - currentX
         
         let threshold: CGFloat = 5.0
+        let teleportThreshold: CGFloat = 1000.0 // Teleport if > 1000 units away (approx < 1 screen width but instant feel)
         
         if abs(dx) > threshold {
+            // Standard Walking Logic
             if !isWalking {
                 walkingAnimation?.start()
                 isWalking = true
@@ -83,6 +140,11 @@ class PetController {
                 characterNode.position.x += distance * (dx > 0 ? 1 : -1)
             } else {
                 characterNode.position.x = targetX
+            }
+            
+            // Clamp to world bounds
+            if worldSize.width > 0 {
+                characterNode.position.x = max(0, min(characterNode.position.x, worldSize.width))
             }
         } else {
             if isWalking {

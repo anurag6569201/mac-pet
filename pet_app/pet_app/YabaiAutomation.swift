@@ -113,6 +113,25 @@ class YabaiAutomation {
             return []
         }
     }
+
+    /// Returns a map of Display Index (1-based) to Visible Space Index (0-based)
+    func getVisibleSpacesMap() -> [Int: Int] {
+        let spaces = getAllSpaces()
+        var map: [Int: Int] = [:]
+        
+        // Filter for visible spaces and map display -> space index
+        // Note: Yabai space index is 1-based, typically passed as `index`.
+        // We want to map to our internal 0-based index which is usually (yabaiIndex - 1).
+        // BUT strict checking: `space.index` from yabai is 1-based.
+        // `space.display` is 1-based.
+        
+        for space in spaces where space.isVisible {
+            // Map Display ID -> Space Index (Converted to 0-based for our Grid)
+            map[space.display] = space.index - 1
+        }
+        
+        return map
+    }
     
     func moveWindowToSpace(windowId: Int, spaceIndex: Int) {
         let process = Process()
