@@ -16,11 +16,11 @@ struct PetConfig {
     }
     
     static func groundPos(for size: CGSize) -> SCNVector3 {
-        return SCNVector3(size.width - 200, 50, 0)
+        return SCNVector3(size.width - 200, 0, 0)
     }
     
     static func finalPos(for size: CGSize) -> SCNVector3 {
-        return SCNVector3(50, 50, 0)
+        return SCNVector3(50, 0, 0)
     }
     
     // MARK: - Asset Paths

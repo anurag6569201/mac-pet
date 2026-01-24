@@ -9,32 +9,24 @@ import SwiftUI
 
 struct OverlayView: View {
     let desktopCount: Int
-    let xOffset: CGFloat
+    let desktopIndex: Int
+    let screenSize: CGSize // We need actual screen size for camera setup
     
     var body: some View {
         GeometryReader { geometry in
-            let screenWidth = geometry.size.width
-            let fullWidth = screenWidth * CGFloat(desktopCount)
+            // No more ZStack with offset.
+            // Just the CharacterView which will handle its own camera.
+            // We pass the screen size and index so CharacterView can setup the correct camera.
             
-            ZStack {
-                // Red background with 0.1 opacity covering full extended width
-                Color.red.opacity(0.1)
-                    .frame(width: fullWidth, height: geometry.size.height)
-                    .offset(x: xOffset)
-                
-                // Character View - covering full extended width for 3D coordinate mapping
-                CharacterView(size: CGSize(width: fullWidth, height: geometry.size.height))
-                    .frame(width: fullWidth, height: geometry.size.height)
-                    .offset(x: xOffset)
-            }
+            CharacterView(size: screenSize, desktopIndex: desktopIndex)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.red.opacity(0.1))
-        .clipped() // Overflow hidden
+        .background(Color.red.opacity(0.1)) // Red background with 0.1 opacity
         .ignoresSafeArea(.all)
     }
 }
 
 #Preview {
-    OverlayView(desktopCount: 3, xOffset: 0)
+    OverlayView(desktopCount: 3, desktopIndex: 0, screenSize: CGSize(width: 1440, height: 900))
 }

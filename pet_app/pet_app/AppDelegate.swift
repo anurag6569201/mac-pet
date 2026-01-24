@@ -19,9 +19,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Hide dock icon and Cmd+Tab
         NSApp.setActivationPolicy(.accessory)
         
-        // Set up space change monitoring
+        // Set up native space change monitoring
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(handleSpaceChange),
+            name: NSWorkspace.activeSpaceDidChangeNotification,
+            object: nil
+        )
+        
+        // Also keep Yabai listener as backup/complement (if needed for other things)
         YabaiAutomation.shared.onSpaceChanged = { [weak self] in
             self?.handleSpaceChange()
+        }
+        
+        // Configure PetController with total world size
+        if let mainScreen = NSScreen.main {
+             let spaces = YabaiAutomation.shared.getAllSpaces()
+             let desktopCount = max(spaces.count, 1)
+             let totalWidth = mainScreen.frame.width * CGFloat(desktopCount)
+             let worldSize = CGSize(width: totalWidth, height: mainScreen.frame.height)
+             
+             // Initialize the shared world once
+             PetController.shared.configure(with: worldSize)
         }
         
         // Create overlay for current desktop only
@@ -47,43 +66,59 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     // MARK: - Space Change Handling
     
-    private func handleSpaceChange() {
-        // Small delay to ensure space change is complete
+    @objc private func handleSpaceChange() {
+        // Small delay to ensure space change is complete and isOnActiveSpace updates
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
             self?.createOverlayForCurrentDesktop()
         }
     }
     
     private func createOverlayForCurrentDesktop() {
-        // Get current space
-        guard let currentSpaceIndex = getCurrentSpaceIndex() else {
-            print(" [Overlay] Could not get current space index")
-            return
+        // 1. Logic: Check if WE already have a window on the active space.
+        // filtering all our windows to find one that is on the active space
+        let activeOverlay = overlaysBySpace.values.first { window in
+            return window.isOnActiveSpace && window.isVisible
         }
         
-        // Check if overlay already exists for this space
+        if let existing = activeOverlay {
+            print(" [Overlay] Overlay already exists on active space. Window: \(existing.title). Skipping.")
+            existing.orderFrontRegardless() // Ensure it's top
+            return
+        }
+
+        // 2. No overlay found on active space. Proceed to create one.
+        
+        // Get current space index (needed for offset calculation)
+        // Default to space 1 if detection fails, to ensure we at least show something.
+        let currentSpaceIndex = getCurrentSpaceIndex() ?? 1
+        
+        // Double check our internal map just in case (though step 1 is more robust for "active space")
         if overlaysBySpace[currentSpaceIndex] != nil {
-            print(" [Overlay] Overlay already exists for space \(currentSpaceIndex), skipping")
+            print(" [Overlay] Map says overlay exists for index \(currentSpaceIndex), but isOnActiveSpace was false. Re-checking/Showing.")
+            overlaysBySpace[currentSpaceIndex]?.orderFrontRegardless()
             return
         }
         
-        print(" [Overlay] Creating overlay for space \(currentSpaceIndex)")
+        print(" [Overlay] Creating NEW overlay for space index \(currentSpaceIndex)")
         
         // Get all spaces to calculate desktop count
         let spaces = YabaiAutomation.shared.getAllSpaces()
-        let desktopCount = spaces.count
+        let desktopCount = max(spaces.count, 1) // Ensure at least 1
         
         // Get main screen
         guard let mainScreen = NSScreen.main else { return }
-        let screenFrame = mainScreen.frame
+        let screenFrame = mainScreen.frame // This is the size of ONE screen
         
-        // Calculate xOffset for this desktop
+        // Calculate desktop index (0-based)
         let desktopIndex = currentSpaceIndex - 1
-        let screenWidth = screenFrame.width
-        let xOffset = -CGFloat(desktopIndex) * screenWidth
         
-        // Create the SwiftUI view
-        let contentView = OverlayView(desktopCount: desktopCount, xOffset: xOffset)
+        // Create the SwiftUI view for this specific desktop slice
+        // We pass the desktop index so it knows which part of the world to show
+        let contentView = OverlayView(
+            desktopCount: desktopCount,
+            desktopIndex: desktopIndex,
+            screenSize: screenFrame.size
+        )
         
         // Create window on current space
         createOverlayWindow(
@@ -114,11 +149,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.level = .floating
         
         // Collection behavior - window stays on its specific desktop
+        // .moveToActiveSpace allows it to follow? NO, we want it stuck to its space.
+        // .canJoinAllSpaces false means it sticks to the current one.
         window.collectionBehavior = [
             .fullScreenAuxiliary,     // Appear above fullscreen apps
-            .ignoresCycle             // Don't appear in window cycling
+            .ignoresCycle,            // Don't appear in window cycling
+            .transient,               // Don't show in Mission Control (optional, cleaner)
         ]
-        // Note: Without .canJoinAllSpaces, window stays on the desktop where it was created
+        
+        // Explicitly NOT .canJoinAllSpaces, so it stays here.
         
         window.isMovable = false
         window.isMovableByWindowBackground = false
@@ -133,7 +172,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.setFrame(screenFrame, display: true)
         
         // Make window visible and ensure it's on top
-        window.makeKeyAndOrderFront(nil)
+        // Do NOT use makeKeyAndOrderFront because this is a borderless/passive window 
+        // and shouldn't steal focus. It causes warnings if we try.
         window.orderFrontRegardless()
         
         // Store window for this space
