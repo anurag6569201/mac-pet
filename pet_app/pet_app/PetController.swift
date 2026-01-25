@@ -113,6 +113,13 @@ class PetController {
         let deltaTime = time - lastUpdateTime
         lastUpdateTime = time
         
+        // Apply current scale with clamping
+        let rawScale = max(0.05, PetConfig.characterScale.x)
+        characterNode.scale = SCNVector3(rawScale, rawScale, rawScale)
+        
+        let scaleFactor = CGFloat(rawScale)
+        let physicsScale = sqrt(scaleFactor) // Froude scaling for dynamics
+        
         // Mouse Following Logic
         let mouseLoc = NSEvent.mouseLocation
         
@@ -160,8 +167,11 @@ class PetController {
         let currentX = characterNode.position.x
         let dx = targetX - currentX
         
-        let threshold: CGFloat = PetConfig.mouseDeadZoneRadius
-        let teleportThreshold: CGFloat = 1000.0 // Teleport if > 1000 units away (approx < 1 screen width but instant feel)
+        let threshold: CGFloat = PetConfig.mouseDeadZoneRadius * scaleFactor
+        let teleportThreshold: CGFloat = 1000.0 * scaleFactor // Teleport if > 1000 units away (approx < 1 screen width but instant feel)
+        
+        // Normalize distance for logic checks
+        let effectiveDistance = abs(dx) / scaleFactor
         
         if abs(dx) > threshold {
             // PRIORITY 1: MOVEMENT ANIMATIONS - Always override idle animations
@@ -228,7 +238,7 @@ class PetController {
                     jumpOverAnimation?.start()
                     isJumping = true
                 }
-            } else if distance > 500 {
+            } else if effectiveDistance > 500 {
                 // FAST RUN
                 if isWalking { walkingAnimation?.stop(); isWalking = false }
                 if isSlowRunning { slowRunAnimation?.stop(); isSlowRunning = false }
@@ -238,7 +248,7 @@ class PetController {
                     fastRunAnimation?.start()
                     isRunning = true
                 }
-            } else if distance > 200 {
+            } else if effectiveDistance > 200 {
                 // SLOW RUN
                 if isWalking { walkingAnimation?.stop(); isWalking = false }
                 if isRunning { fastRunAnimation?.stop(); isRunning = false }
@@ -266,13 +276,13 @@ class PetController {
             // Determine speed
             let moveSpeed: CGFloat
             if isJumping {
-                moveSpeed = PetConfig.jumpSpeed
-            } else if distance > 500 {
-                moveSpeed = PetConfig.runSpeed
-            } else if distance > 200 {
-                moveSpeed = PetConfig.slowRunSpeed
+                moveSpeed = PetConfig.jumpSpeed * physicsScale
+            } else if effectiveDistance > 500 {
+                moveSpeed = PetConfig.runSpeed * physicsScale
+            } else if effectiveDistance > 200 {
+                moveSpeed = PetConfig.slowRunSpeed * physicsScale
             } else {
-                moveSpeed = PetConfig.walkSpeed
+                moveSpeed = PetConfig.walkSpeed * physicsScale
             }
             
             let moveDistance = moveSpeed * CGFloat(deltaTime)
@@ -566,7 +576,7 @@ class PetController {
         camera.usesOrthographicProjection = true
         camera.orthographicScale = Double(screenSize.height / 2)
         camera.zNear = 1
-        camera.zFar = 1000
+        camera.zFar = 2000
 
         let node = SCNNode()
         node.camera = camera
@@ -581,7 +591,7 @@ class PetController {
         let screenWidth = screenSize.width
         let centerX = (screenWidth * CGFloat(desktopIndex)) + (screenWidth / 2)
         
-        node.position = SCNVector3(centerX, screenSize.height / 2, 100)
+        node.position = SCNVector3(centerX, screenSize.height / 2, 400)
         
         // We do NOT add this node to the shared scene rootNode generally, 
         // because we might get clutter if windows are recreated.
@@ -752,11 +762,16 @@ class PetController {
         // Don't trigger if already performing a mouse behavior or moving
         guard !isPerformingMouseBehavior && !isWalking && !isRunning && !isSlowRunning && !isJumping else { return }
         
+        // Scale proximity thresholds
+        let scaleFactor = CGFloat(PetConfig.characterScale.x)
+        let scaledProximityNear = PetConfig.mouseProximityNear * scaleFactor
+        let scaledProximityClose = PetConfig.mouseProximityClose * scaleFactor
+        
         let distance = distanceToPet(mousePos: mousePos)
         let velocity = calculateMouseVelocity()
         
         // BEHAVIOR 1: Surprise - Sudden mouse jump/teleport
-        if velocity > PetConfig.mouseVelocitySudden && distance < PetConfig.mouseProximityClose {
+        if velocity > PetConfig.mouseVelocitySudden && distance < scaledProximityClose {
             if canTriggerBehavior("surprise", cooldown: PetConfig.surpriseCooldown, currentTime: time) {
                 triggerMouseBehavior("surprise", currentTime: time, animation: {
                     self.surpriseAnimation?.start()
@@ -766,7 +781,7 @@ class PetController {
         }
         
         // BEHAVIOR 2: Angry - Rapid erratic movement near pet
-        if velocity > PetConfig.mouseVelocityRapid && distance < PetConfig.mouseProximityNear {
+        if velocity > PetConfig.mouseVelocityRapid && distance < scaledProximityNear {
             if canTriggerBehavior("angry", cooldown: PetConfig.angryEmotionCooldown, currentTime: time) {
                 triggerMouseBehavior("angry", currentTime: time, animation: {
                     self.angryEmotionAnimation?.start()
@@ -776,7 +791,7 @@ class PetController {
         }
         
         // BEHAVIOR 3: Double Wave - Mouse enters proximity zone
-        if distance < PetConfig.mouseProximityNear && distance > PetConfig.mouseProximityClose {
+        if distance < scaledProximityNear && distance > scaledProximityClose {
             if canTriggerBehavior("doubleWave", cooldown: PetConfig.doubleWaveCooldown, currentTime: time) {
                 triggerMouseBehavior("doubleWave", currentTime: time, animation: {
                     self.doubleHandWaveAnimation?.start()
@@ -786,7 +801,7 @@ class PetController {
         }
         
         // BEHAVIOR 4: One Hand Wave - Mouse hovers near pet
-        if distance < PetConfig.mouseProximityNear {
+        if distance < scaledProximityNear {
             if mouseHoverStartTime == nil {
                 mouseHoverStartTime = time
             } else if let hoverStart = mouseHoverStartTime, time - hoverStart >= PetConfig.hoverDuration {

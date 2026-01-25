@@ -10,7 +10,11 @@ struct DoubleHandWaveAnimation {
     }
     
     func start() {
-        self.doubleWavePlayers.forEach { $0.play() }
+        let speed = 1.0 / sqrt(CGFloat(max(0.05, PetConfig.characterScale.x)))
+        self.doubleWavePlayers.forEach { 
+            $0.speed = speed
+            $0.play() 
+        }
     }
     
     func stop() {

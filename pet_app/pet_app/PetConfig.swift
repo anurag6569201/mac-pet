@@ -2,7 +2,7 @@ import SceneKit
 
 struct PetConfig {
     // MARK: - Character Settings
-    static let characterScale = SCNVector3(0.8, 0.8, 0.8)
+    static var characterScale = SCNVector3(4, 4, 4)
     
     // MARK: - Animation Speeds & Durations
     static let walkSpeed: CGFloat = 130.0
@@ -82,12 +82,12 @@ struct PetConfig {
     static let surpriseCooldown: TimeInterval = 6.0
     
     // Hover detection
-    static let hoverDuration: TimeInterval = 1.0 // How long mouse must hover for one hand wave
+    static let hoverDuration: TimeInterval = 20.0 // How long mouse must hover for one hand wave
     
     // Mouse history tracking
     static let mouseHistorySize: Int = 10 // Number of recent positions to track
     
     // MARK: - Mouse Following Settings
-    static let mouseDeadZoneRadius: CGFloat = 200.0 // Minimum distance before pet starts moving
+    static let mouseDeadZoneRadius: CGFloat = 1.0 // Minimum distance before pet starts moving
 }
 

@@ -10,7 +10,11 @@ struct YawnAnimation {
     }
     
     func start() {
-        self.yawnPlayers.forEach { $0.play() }
+        let speed = 1.0 / sqrt(CGFloat(max(0.05, PetConfig.characterScale.x)))
+        self.yawnPlayers.forEach { 
+            $0.speed = speed
+            $0.play() 
+        }
     }
     
     func stop() {

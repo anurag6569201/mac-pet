@@ -22,7 +22,11 @@ struct JumpOverAnimation {
     }
     
     func start() {
-        self.jumpOverPlayers.forEach { $0.play() }
+        let speed = 1.0 / sqrt(CGFloat(max(0.05, PetConfig.characterScale.x)))
+        self.jumpOverPlayers.forEach { 
+            $0.speed = speed
+            $0.play() 
+        }
     }
     
     func stop(immediate: Bool = false) {
