@@ -30,17 +30,17 @@ class ChatBubble: SCNNode {
     init(text: String, direction: BubbleDirection = .center) {
         self.direction = direction
         
-        // 1. Create Text Geometry with smart wrapping
-        // Calculate optimal width based on text length
-        let estimatedWidth = min(maxWidth, CGFloat(text.count) * 8.5 + padding * 2)
-        let containerWidth = estimatedWidth - (padding * 2)
+        // 1. Create Text Geometry with smart wrapping for multi-line paragraphs
+        // Use maxWidth for consistent bubble width
+        let containerWidth = maxWidth - (padding * 2)
         
         textGeometry = SCNText(string: text, extrusionDepth: 0.6)
         textGeometry.font = font
         textGeometry.flatness = 0.1 // Smoother, higher quality text
-        textGeometry.containerFrame = CGRect(x: -containerWidth/2, y: 0, width: containerWidth, height: 400)
-        textGeometry.alignmentMode = CATextLayerAlignmentMode.center.rawValue
-        textGeometry.truncationMode = CATextLayerTruncationMode.end.rawValue
+        textGeometry.containerFrame = CGRect(x: 0, y: -1000, width: containerWidth, height: 2000)
+        textGeometry.alignmentMode = CATextLayerAlignmentMode.left.rawValue
+        textGeometry.isWrapped = true // Enable text wrapping for paragraphs
+        // Remove truncation to allow full paragraph display
         
         let textMaterial = SCNMaterial()
         textMaterial.diffuse.contents = textColor
@@ -134,41 +134,30 @@ class ChatBubble: SCNNode {
         
         backgroundNode.geometry = shape
         
-        // 5. Position Text with perfect centering
-        // Center the text pivot point
-        let pivotX = CGFloat(Float(minBounds.x + textWidth/2))
+        // 5. Position Text with left alignment
+        // For left-aligned text, we need to position it at the left edge of the bubble with padding
+        let pivotX = CGFloat(Float(minBounds.x))
         let pivotY = CGFloat(Float(minBounds.y + textHeight/2))
         textNode.pivot = SCNMatrix4MakeTranslation(pivotX, pivotY, 0)
         
-        // Calculate lateral offset for text position to match the bubble body
-        var xOffset: CGFloat = 0
+        // Calculate position for left-aligned text
         let lateralOffset: CGFloat = 20.0
+        var xOffset: CGFloat = 0
         
-        switch direction {
-        case .left: xOffset = (bubbleWidth / 2) + lateralOffset
-        case .right: xOffset = -(bubbleWidth / 2) - lateralOffset
-        case .center: xOffset = 0
-        }
-        
-        // Position text in the center of the bubble, accounting for tail and offset
-        let textY = tailHeight + bubbleHeight / 2
-        
-        // Check createBubblePath logic:
-        // .left: Body starts at lateralOffset. Center is lateralOffset + width/2.
-        // .right: Body starts at -width - lateralOffset. Center is -width/2 - lateralOffset? 
-        // Let's re-verify createBubblePath logic:
-        // .right: bodyRect = NSRect(x: -width - lateralOffset...
-        //   Center X = (-width - lateralOffset) + width/2 = -width/2 - lateralOffset. roughly.
-        // .left: bodyRect = NSRect(x: lateralOffset...
-        //   Center X = lateralOffset + width/2.
-        
+        // Position text at the left edge of the bubble body with padding
         if direction == .left {
-             xOffset = lateralOffset + (bubbleWidth / 2)
+            // Bubble on right side, body starts at lateralOffset
+            xOffset = lateralOffset + padding
         } else if direction == .right {
-             xOffset = -lateralOffset - (bubbleWidth / 2)
+            // Bubble on left side, body starts at -width - lateralOffset
+            xOffset = -bubbleWidth - lateralOffset + padding
         } else {
-             xOffset = 0
+            // Center bubble, body starts at -width/2
+            xOffset = -bubbleWidth/2 + padding
         }
+        
+        // Position text in the vertical center of the bubble
+        let textY = tailHeight + bubbleHeight / 2
         
         textNode.position = SCNVector3(xOffset, textY, extrusionDepth/2 + 0.6)
     }

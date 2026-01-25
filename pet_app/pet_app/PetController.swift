@@ -578,8 +578,8 @@ class PetController {
         floorNode.position = SCNVector3(0, 0, 0)
         scene.rootNode.addChildNode(floorNode)
         
-        // Show initial chat bubble
-        showChatBubble(text: "I am a pet and i am working for a software devloper for mac os app which is osm really awesome app")
+        // Show initial chat bubble with a large paragraph
+        showChatBubble(text: "Hello! I'm your desktop pet companion. I can walk, run, jump across multiple desktops, and perform various animations. I'll follow your mouse cursor around and react to your movements. Try moving your mouse near me to see different behaviors!")
     }
 
     // Factory method for per-desktop cameras
