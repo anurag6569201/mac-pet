@@ -13,6 +13,8 @@ struct PetConfig {
     static let standUpDuration: TimeInterval = 1.0
     static let overlapDuration: TimeInterval = 0.5
     static let transitionDuration: CGFloat = 0.3
+    static let jumpSpeed: CGFloat = 380.0 // Little less than runSpeed (550)
+    static let jumpPrepareDistance: CGFloat = 150.0 // Distance from edge to start/land jumping
     
     // MARK: - Positions
     static func startPos(for size: CGSize) -> SCNVector3 {
@@ -39,6 +41,7 @@ struct PetConfig {
     static let armStretchAnimationFile = "arm-stretching.dae"
     static let neckStretchAnimationFile = "neck-stretching.dae"
     static let yawnAnimationFile = "Yawn.dae"
+    static let jumpOverAnimationFile = "transition/jump-over.dae"
     
     // Mouse Behavior Animation Files
     static let angryEmotionAnimationFile = "mouse_behavior/angry-emotion.dae"

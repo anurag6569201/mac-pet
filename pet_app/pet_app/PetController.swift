@@ -17,6 +17,7 @@ class PetController {
     private var armStretchAnimation: ArmStretchAnimation?
     private var neckStretchAnimation: NeckStretchAnimation?
     private var yawnAnimation: YawnAnimation?
+    private var jumpOverAnimation: JumpOverAnimation?
     
     // Mouse Behavior Animations (PRIORITY 2)
     private var angryEmotionAnimation: AngryEmotionAnimation?
@@ -30,6 +31,7 @@ class PetController {
     private var isWalking = false
     private var isRunning = false
     private var isSlowRunning = false
+    private var isJumping = false
     
     // Idle Animation State
     private var lastActivityTime: TimeInterval = 0
@@ -46,6 +48,9 @@ class PetController {
     private var mouseHoverStartTime: TimeInterval? = nil
     private var lastMouseBehaviorTimes: [String: TimeInterval] = [:] // Cooldown tracking
     private var longIdleTriggered = false
+    
+    // Jump State
+    private var activeJumpBoundaryX: CGFloat?
     
     private var isConfigured = false
     
@@ -164,16 +169,70 @@ class PetController {
             stopAllIdleAnimations()
             stopAllMouseBehaviors()
             
+            // Check for space transition
+            let currentSpaceIndex = Int(characterNode.position.x / screenWidth)
+            let targetSpaceIndexCalc = Int(targetX / screenWidth)
+            let isSpaceTransition = currentSpaceIndex != targetSpaceIndexCalc
+            
             // Reset idle timers
             lastActivityTime = time
             longIdleTriggered = false
             
             let distance = abs(dx)
             
-            if distance > 500 {
+            // Jump Logic: 
+            // 1. If already jumping, check if we finished the jump (moved past boundary + prepare dist)
+            // 2. If not jumping, but transitioning space, check if close enough to start jump
+            
+            var shouldBeJumping = false
+            
+            if isJumping, let boundaryX = activeJumpBoundaryX {
+                let distToBoundary = abs(characterNode.position.x - boundaryX)
+                // Continue jumping if we are within range OR if we haven't crossed yet (handled by direction check implicitly via distance)
+                // Actually, simple check: are we still within the "jump zone"?
+                // Jump zone is [boundaryX - prepareDist, boundaryX + prepareDist]
+                // But we mainly care about target side.
+                
+                if distToBoundary < PetConfig.jumpPrepareDistance + 50 { // Add buffer to ensure we land cleanly
+                     shouldBeJumping = true
+                } else {
+                     // We landed
+                     shouldBeJumping = false
+                     activeJumpBoundaryX = nil
+                }
+            } else if isSpaceTransition {
+                // Determine direction of movement for boundary
+                let boundaryX: CGFloat
+                if dx > 0 {
+                    boundaryX = CGFloat(currentSpaceIndex + 1) * screenWidth
+                } else {
+                    boundaryX = CGFloat(currentSpaceIndex) * screenWidth
+                }
+                
+                let distToBoundary = abs(boundaryX - currentX)
+                
+                // Only jump if we are close to the edge
+                if distToBoundary < PetConfig.jumpPrepareDistance {
+                    shouldBeJumping = true
+                    activeJumpBoundaryX = boundaryX
+                }
+            }
+            
+            if shouldBeJumping {
+                // JUMP OVER
+                if isWalking { walkingAnimation?.stop(); isWalking = false }
+                if isSlowRunning { slowRunAnimation?.stop(); isSlowRunning = false }
+                if isRunning { fastRunAnimation?.stop(); isRunning = false }
+                
+                if !isJumping {
+                    jumpOverAnimation?.start()
+                    isJumping = true
+                }
+            } else if distance > 500 {
                 // FAST RUN
                 if isWalking { walkingAnimation?.stop(); isWalking = false }
                 if isSlowRunning { slowRunAnimation?.stop(); isSlowRunning = false }
+                if isJumping { jumpOverAnimation?.stop(); isJumping = false; activeJumpBoundaryX = nil }
                 
                 if !isRunning {
                     fastRunAnimation?.start()
@@ -183,6 +242,7 @@ class PetController {
                 // SLOW RUN
                 if isWalking { walkingAnimation?.stop(); isWalking = false }
                 if isRunning { fastRunAnimation?.stop(); isRunning = false }
+                if isJumping { jumpOverAnimation?.stop(); isJumping = false; activeJumpBoundaryX = nil }
                 
                 if !isSlowRunning {
                     slowRunAnimation?.start()
@@ -192,6 +252,7 @@ class PetController {
                 // WALK
                 if isRunning { fastRunAnimation?.stop(); isRunning = false }
                 if isSlowRunning { slowRunAnimation?.stop(); isSlowRunning = false }
+                if isJumping { jumpOverAnimation?.stop(); isJumping = false; activeJumpBoundaryX = nil }
                 
                 if !isWalking {
                     walkingAnimation?.start()
@@ -204,7 +265,9 @@ class PetController {
             
             // Determine speed
             let moveSpeed: CGFloat
-            if distance > 500 {
+            if isJumping {
+                moveSpeed = PetConfig.jumpSpeed
+            } else if distance > 500 {
                 moveSpeed = PetConfig.runSpeed
             } else if distance > 200 {
                 moveSpeed = PetConfig.slowRunSpeed
@@ -231,9 +294,10 @@ class PetController {
             if isWalking { walkingAnimation?.stop(); isWalking = false }
             if isRunning { fastRunAnimation?.stop(); isRunning = false }
             if isSlowRunning { slowRunAnimation?.stop(); isSlowRunning = false }
+            if isJumping { jumpOverAnimation?.stop(); isJumping = false }
             
             // Double-check: If any movement animation is still active, don't play other animations
-            if isWalking || isRunning || isSlowRunning {
+            if isWalking || isRunning || isSlowRunning || isJumping {
                 return
             }
             
@@ -293,7 +357,7 @@ class PetController {
                     guard let self = self else { return }
                     
                     // STRICT PRIORITY CHECK: Don't start animation if movement started during rotation
-                    guard !self.isWalking && !self.isRunning && !self.isSlowRunning else {
+                    guard !self.isWalking && !self.isRunning && !self.isSlowRunning && !self.isJumping else {
                         self.isPerformingLongIdle = false
                         return
                     }
@@ -310,7 +374,7 @@ class PetController {
                     // Return to idle breathing after animation completes (estimate 3 seconds)
                     DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
                         // STRICT PRIORITY CHECK: Don't restart idle if movement started
-                        guard !self.isWalking && !self.isRunning && !self.isSlowRunning else {
+                        guard !self.isWalking && !self.isRunning && !self.isSlowRunning && !self.isJumping else {
                             self.isPerformingLongIdle = false
                             return
                         }
@@ -348,7 +412,7 @@ class PetController {
                         guard let self = self else { return }
                         
                         // STRICT PRIORITY CHECK: Don't start animation if movement started during rotation
-                        guard !self.isWalking && !self.isRunning && !self.isSlowRunning else {
+                        guard !self.isWalking && !self.isRunning && !self.isSlowRunning && !self.isJumping else {
                             self.isPerformingLongIdle = false
                             return
                         }
@@ -362,7 +426,7 @@ class PetController {
                         // Return to idle breathing after animation completes
                         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                             // STRICT PRIORITY CHECK: Don't restart idle if movement started
-                            guard !self.isWalking && !self.isRunning && !self.isSlowRunning else {
+                            guard !self.isWalking && !self.isRunning && !self.isSlowRunning && !self.isJumping else {
                                 self.isPerformingLongIdle = false
                                 return
                             }
@@ -395,7 +459,7 @@ class PetController {
                     guard let self = self else { return }
                     
                     // STRICT PRIORITY CHECK: Don't start animation if movement started during rotation
-                    guard !self.isWalking && !self.isRunning && !self.isSlowRunning else {
+                    guard !self.isWalking && !self.isRunning && !self.isSlowRunning && !self.isJumping else {
                         self.isLookingAround = false
                         return
                     }
@@ -405,7 +469,7 @@ class PetController {
                     // Return to idle breathing after look-around completes (estimate 2 seconds)
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                         // STRICT PRIORITY CHECK: Don't restart idle if movement started
-                        guard !self.isWalking && !self.isRunning && !self.isSlowRunning else {
+                        guard !self.isWalking && !self.isRunning && !self.isSlowRunning && !self.isJumping else {
                             self.lookAroundAnimation?.stop()
                             self.isLookingAround = false
                             return
@@ -542,6 +606,7 @@ class PetController {
         armStretchAnimation = ArmStretchAnimation.setup(for: characterNode)
         neckStretchAnimation = NeckStretchAnimation.setup(for: characterNode)
         yawnAnimation = YawnAnimation.setup(for: characterNode)
+        jumpOverAnimation = JumpOverAnimation.setup(for: characterNode)
         
         // Mouse Behavior Animations
         angryEmotionAnimation = AngryEmotionAnimation.setup(for: characterNode)
@@ -661,7 +726,7 @@ class PetController {
             guard let self = self else { return }
             
             // STRICT PRIORITY CHECK: Don't start animation if movement started during rotation
-            guard !self.isWalking && !self.isRunning && !self.isSlowRunning else {
+            guard !self.isWalking && !self.isRunning && !self.isSlowRunning && !self.isJumping else {
                 self.isPerformingMouseBehavior = false
                 return
             }
@@ -671,7 +736,7 @@ class PetController {
             // Return to idle after animation completes
             DispatchQueue.main.asyncAfter(deadline: .now() + duration) {
                 // STRICT PRIORITY CHECK: Don't change state if movement started
-                guard !self.isWalking && !self.isRunning && !self.isSlowRunning else {
+                guard !self.isWalking && !self.isRunning && !self.isSlowRunning && !self.isJumping else {
                     return
                 }
                 
@@ -685,7 +750,7 @@ class PetController {
     /// Detects and triggers mouse behaviors based on mouse state
     private func checkMouseBehaviors(mousePos: CGPoint, time: TimeInterval, screenSize: CGSize) {
         // Don't trigger if already performing a mouse behavior or moving
-        guard !isPerformingMouseBehavior && !isWalking && !isRunning && !isSlowRunning else { return }
+        guard !isPerformingMouseBehavior && !isWalking && !isRunning && !isSlowRunning && !isJumping else { return }
         
         let distance = distanceToPet(mousePos: mousePos)
         let velocity = calculateMouseVelocity()
