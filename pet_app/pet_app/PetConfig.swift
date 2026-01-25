@@ -2,7 +2,7 @@ import SceneKit
 
 struct PetConfig {
     // MARK: - Character Settings
-    static var characterScale = SCNVector3(4, 4, 4)
+    static var characterScale = SCNVector3(0.8, 0.8, 0.8)
     
     // MARK: - Animation Speeds & Durations
     static let walkSpeed: CGFloat = 130.0

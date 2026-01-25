@@ -53,12 +53,15 @@ class PetController {
     private var activeJumpBoundaryX: CGFloat?
     
     private var isConfigured = false
-    
+        
     // Centralized Active Desktop State
     var activeDesktopIndex: Int = 0
-    
+
     // Cache of visible spaces per display: [DisplayID (1-based) : SpaceIndex (0-based)]
     var visibleSpacesByDisplay: [Int: Int] = [:]
+    
+    // Chat Bubble
+    private var chatBubble: ChatBubble?
     
     private init() {
         // Initialize Scene and Nodes
@@ -87,6 +90,7 @@ class PetController {
     }
     
     private var worldSize: CGSize = .zero
+    private var currentScreenSize: CGSize = .zero
 
     func configure(with size: CGSize) {
         guard !isConfigured else { return }
@@ -106,6 +110,8 @@ class PetController {
     }
     
     func update(atTime time: TimeInterval, screenSize: CGSize) {
+        // Store current screen size for use in chat bubble positioning
+        currentScreenSize = screenSize
         if lastUpdateTime == 0 {
             lastUpdateTime = time
             return
@@ -298,6 +304,9 @@ class PetController {
             if worldSize.width > 0 {
                 characterNode.position.x = max(0, min(characterNode.position.x, worldSize.width))
             }
+            
+            // Update chat bubble direction based on character position
+            updateChatBubbleDirectionIfNeeded()
         } else {
             // Not moving - check for mouse behaviors and idle animations
             // First, ensure all movement animations are stopped
@@ -568,6 +577,9 @@ class PetController {
         floorNode.eulerAngles.x = -.pi / 2
         floorNode.position = SCNVector3(0, 0, 0)
         scene.rootNode.addChildNode(floorNode)
+        
+        // Show initial chat bubble
+        showChatBubble(text: "I am a pet and i am working for a software devloper for mac os app which is osm really awesome app")
     }
 
     // Factory method for per-desktop cameras
@@ -605,6 +617,113 @@ class PetController {
         scene.rootNode.addChildNode(node)
         
         return node
+    }
+    
+    func showChatBubble(text: String) {
+        // remove existing
+        chatBubble?.removeFromParentNode()
+        
+        let currentX = characterNode.position.x
+        let scaleFactor = CGFloat(characterNode.scale.x)
+        
+        // Get screen width - use stored screenSize or fallback
+        let screenWidth = currentScreenSize.width > 0 ? currentScreenSize.width : (NSScreen.main?.frame.width ?? 1440.0)
+        
+        // Calculate character's position relative to the ACTIVE desktop/screen
+        // Use activeDesktopIndex to determine which screen we're viewing
+        let activeScreenOffset = CGFloat(activeDesktopIndex) * screenWidth
+        let relativeX = currentX - activeScreenOffset
+        
+        // Determine if character is on left or right side of the visible screen
+        // Left side: relativeX < screenWidth / 2
+        // Right side: relativeX >= screenWidth / 2
+        
+        // Bubble direction logic:
+        // .left = Bubble appears to the RIGHT of pet (tail points bottom-left)
+        // .right = Bubble appears to the LEFT of pet (tail points bottom-right)
+        // So: character on left → bubble on right → use .left
+        //     character on right → bubble on left → use .right
+        
+        var direction: ChatBubble.BubbleDirection = .left
+        
+        if relativeX >= screenWidth / 2 {
+            // Character is on right side of visible screen → bubble on left
+            direction = .right
+        } else {
+            // Character is on left side of visible screen → bubble on right
+            direction = .left
+        }
+        
+        let bubble = ChatBubble(text: text, direction: direction)
+        
+        // Smart vertical positioning based on character scale
+        // Character height scales with characterNode.scale
+        // Base head position is around 140-160 units, scaled appropriately
+        let baseHeadHeight: CGFloat = 160.0
+        let scaledHeadHeight = baseHeadHeight * scaleFactor
+        
+        // Position bubble above head with proper offset
+        // The bubble's origin (tail tip) should be at the head position
+        bubble.position = SCNVector3(0, scaledHeadHeight, -10)
+        
+        // Add constraint to always face camera for best readability
+        let billboardConstraint = SCNBillboardConstraint()
+        billboardConstraint.freeAxes = .all
+        bubble.constraints = [billboardConstraint]
+        
+        characterNode.addChildNode(bubble)
+        chatBubble = bubble
+        
+        // Auto-hide after some time based on text length
+        /*
+        let duration = max(5.0, Double(text.count) * 0.1)
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
+            // Only remove if it's still the SAME bubble
+            if self?.chatBubble === bubble {
+                self?.hideChatBubble()
+            }
+        }
+        */
+    }
+    
+    private func updateChatBubbleDirectionIfNeeded() {
+        guard let bubble = chatBubble else { return }
+        
+        let currentX = characterNode.position.x
+        let screenWidth = currentScreenSize.width > 0 ? currentScreenSize.width : (NSScreen.main?.frame.width ?? 1440.0)
+        
+        // Calculate character's position relative to the ACTIVE desktop/screen
+        // Use activeDesktopIndex to determine which screen we're viewing
+        let activeScreenOffset = CGFloat(activeDesktopIndex) * screenWidth
+        let relativeX = currentX - activeScreenOffset
+        
+        // Determine new direction
+        let newDirection: ChatBubble.BubbleDirection = relativeX >= screenWidth / 2 ? .right : .left
+        
+        // Only update if direction changed
+        if bubble.direction != newDirection {
+            bubble.setDirection(newDirection)
+        }
+    }
+    
+    func hideChatBubble() {
+        guard let bubble = chatBubble else { return }
+        
+        // Smooth exit animation with fade
+        let scaleDown = SCNAction.scale(to: 0.3, duration: 0.25)
+        scaleDown.timingMode = .easeIn
+        
+        let fadeOut = SCNAction.fadeOut(duration: 0.25)
+        
+        let group = SCNAction.group([scaleDown, fadeOut])
+        
+        bubble.runAction(group) {
+            bubble.removeFromParentNode()
+        }
+        
+        if chatBubble === bubble {
+            chatBubble = nil
+        }
     }
     
     private func setupAnimations() {
