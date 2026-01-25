@@ -509,6 +509,9 @@ class PetController {
                 }
             }
         }
+        
+        // Always update chat bubble position to keep it aligned with character
+        updateChatBubblePosition()
     }
     
     private func setupSceneContent() {
@@ -629,12 +632,14 @@ class PetController {
         // Get screen width - use stored screenSize or fallback
         let screenWidth = currentScreenSize.width > 0 ? currentScreenSize.width : (NSScreen.main?.frame.width ?? 1440.0)
         
-        // Calculate character's position relative to the ACTIVE desktop/screen
-        // Use activeDesktopIndex to determine which screen we're viewing
-        let activeScreenOffset = CGFloat(activeDesktopIndex) * screenWidth
-        let relativeX = currentX - activeScreenOffset
+        // Calculate which screen the character is currently on based on their X position
+        let characterScreenIndex = Int(currentX / screenWidth)
         
-        // Determine if character is on left or right side of the visible screen
+        // Calculate character's position relative to THEIR current screen (not active desktop)
+        let screenLeftEdge = CGFloat(characterScreenIndex) * screenWidth
+        let relativeX = currentX - screenLeftEdge
+        
+        // Determine if character is on left or right side of their current screen
         // Left side: relativeX < screenWidth / 2
         // Right side: relativeX >= screenWidth / 2
         
@@ -647,31 +652,36 @@ class PetController {
         var direction: ChatBubble.BubbleDirection = .left
         
         if relativeX >= screenWidth / 2 {
-            // Character is on right side of visible screen → bubble on left
+            // Character is on right side of their screen → bubble on left
             direction = .right
         } else {
-            // Character is on left side of visible screen → bubble on right
+            // Character is on left side of their screen → bubble on right
             direction = .left
         }
         
         let bubble = ChatBubble(text: text, direction: direction)
         
-        // Smart vertical positioning based on character scale
-        // Character height scales with characterNode.scale
-        // Base head position is around 140-160 units, scaled appropriately
+        // Ensure bubble scale is always 1.0 (independent from character scale)
+        bubble.scale = SCNVector3(1.0, 1.0, 1.0)
+        
+        // Smart vertical positioning - use fixed height independent of character scale
+        // Base head position is around 140-160 units, but we keep it fixed regardless of scale
         let baseHeadHeight: CGFloat = 160.0
+        // Scale the head height based on character scale for positioning, but bubble itself stays unscaled
         let scaledHeadHeight = baseHeadHeight * scaleFactor
         
-        // Position bubble above head with proper offset
+        // Position bubble in world space relative to character's world position
         // The bubble's origin (tail tip) should be at the head position
-        bubble.position = SCNVector3(0, scaledHeadHeight, -10)
+        let worldBubbleY = characterNode.position.y + scaledHeadHeight
+        bubble.position = SCNVector3(characterNode.position.x, worldBubbleY, characterNode.position.z - 10)
         
         // Add constraint to always face camera for best readability
         let billboardConstraint = SCNBillboardConstraint()
         billboardConstraint.freeAxes = .all
         bubble.constraints = [billboardConstraint]
         
-        characterNode.addChildNode(bubble)
+        // Add to scene root instead of characterNode to avoid inheriting scale
+        scene.rootNode.addChildNode(bubble)
         chatBubble = bubble
         
         // Auto-hide after some time based on text length
@@ -692,18 +702,36 @@ class PetController {
         let currentX = characterNode.position.x
         let screenWidth = currentScreenSize.width > 0 ? currentScreenSize.width : (NSScreen.main?.frame.width ?? 1440.0)
         
-        // Calculate character's position relative to the ACTIVE desktop/screen
-        // Use activeDesktopIndex to determine which screen we're viewing
-        let activeScreenOffset = CGFloat(activeDesktopIndex) * screenWidth
-        let relativeX = currentX - activeScreenOffset
+        // Calculate which screen the character is currently on based on their X position
+        let characterScreenIndex = Int(currentX / screenWidth)
         
-        // Determine new direction
+        // Calculate character's position relative to THEIR current screen (not active desktop)
+        let screenLeftEdge = CGFloat(characterScreenIndex) * screenWidth
+        let relativeX = currentX - screenLeftEdge
+        
+        // Determine new direction based on character's position within their screen
         let newDirection: ChatBubble.BubbleDirection = relativeX >= screenWidth / 2 ? .right : .left
         
         // Only update if direction changed
         if bubble.direction != newDirection {
             bubble.setDirection(newDirection)
         }
+    }
+    
+    private func updateChatBubblePosition() {
+        guard let bubble = chatBubble else { return }
+        
+        // Ensure bubble scale remains independent (always 1.0)
+        bubble.scale = SCNVector3(1.0, 1.0, 1.0)
+        
+        // Calculate head height based on character scale for positioning
+        let scaleFactor = CGFloat(characterNode.scale.x)
+        let baseHeadHeight: CGFloat = 160.0
+        let scaledHeadHeight = baseHeadHeight * scaleFactor
+        
+        // Update bubble position in world space to follow character
+        let worldBubbleY = characterNode.position.y + scaledHeadHeight
+        bubble.position = SCNVector3(characterNode.position.x, worldBubbleY, characterNode.position.z - 10)
     }
     
     func hideChatBubble() {
