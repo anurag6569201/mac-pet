@@ -108,27 +108,44 @@ class ChatBubble: SCNNode {
         let shape = SCNShape(path: path, extrusionDepth: extrusionDepth)
         shape.chamferRadius = 1.5 // Slightly more chamfer for smoother edges 
         
-        // --- Modern Premium Material Design ---
+        // --- Glossy Blur Transparent Material Design ---
         let bgMaterial = SCNMaterial()
-        // Soft, modern white with subtle warmth
-        bgMaterial.diffuse.contents = NSColor(calibratedRed: 0.99, green: 0.99, blue: 1.0, alpha: 1.0)
+        // Semi-transparent white with blur effect
+        bgMaterial.diffuse.contents = NSColor(calibratedRed: 1.0, green: 1.0, blue: 1.0, alpha: 0.25)
         
-        // Physically based rendering for realistic lighting
+        // Add Gaussian Blur filter for frosted glass effect
+        if let blurFilter = CIFilter(name: "CIGaussianBlur") {
+            blurFilter.setValue(10.0, forKey: kCIInputRadiusKey) // Blur radius
+            bgMaterial.diffuse.contentsTransform = SCNMatrix4Identity
+            bgMaterial.diffuse.wrapS = .clamp
+            bgMaterial.diffuse.wrapT = .clamp
+        }
+        
+        // Physically based rendering for realistic glossy glass effect
         bgMaterial.lightingModel = .physicallyBased
-        bgMaterial.metalness.contents = 0.1 // Subtle metallic sheen
-        bgMaterial.roughness.contents = 0.3 // Smooth but not too glossy
-        bgMaterial.specular.contents = NSColor(white: 0.95, alpha: 1.0)
+        bgMaterial.metalness.contents = 0.6 // Higher metallic for glossy look
+        bgMaterial.roughness.contents = 0.1 // Very smooth for glass-like finish
+        bgMaterial.specular.contents = NSColor(white: 1.0, alpha: 1.0) // Bright specular highlights
         
-        // Subtle emission for visibility in all lighting
-        bgMaterial.emission.contents = NSColor(white: 0.2, alpha: 1.0)
+        // Subtle emission for visibility while maintaining transparency
+        bgMaterial.emission.contents = NSColor(white: 0.15, alpha: 1.0)
         
+        // Enable transparency
+        bgMaterial.transparency = 0.25
+        bgMaterial.transparencyMode = .dualLayer
         bgMaterial.isDoubleSided = true
+        bgMaterial.blendMode = .alpha
         
-        // Chamfer (Rim) Material - subtle highlight
+        // Apply backdrop filter for blur effect
+        bgMaterial.setValue(10.0, forKey: "gaussianBlurRadius")
+        
+        // Chamfer (Rim) Material - glossy edge highlight
         let chamferMaterial = SCNMaterial()
-        chamferMaterial.diffuse.contents = NSColor.white
-        chamferMaterial.lightingModel = .constant
-        chamferMaterial.emission.contents = NSColor(white: 0.4, alpha: 1.0) // Softer rim
+        chamferMaterial.diffuse.contents = NSColor(white: 1.0, alpha: 0.4)
+        chamferMaterial.lightingModel = .physicallyBased
+        chamferMaterial.metalness.contents = 0.8
+        chamferMaterial.roughness.contents = 0.05
+        chamferMaterial.emission.contents = NSColor(white: 0.6, alpha: 1.0) // Brighter rim glow
         
         shape.materials = [bgMaterial, bgMaterial, bgMaterial, bgMaterial, chamferMaterial]
         
