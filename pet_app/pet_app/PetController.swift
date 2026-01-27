@@ -80,6 +80,7 @@ class PetController {
     
     // Cache of visible windows
     private var visibleWindows: [YabaiWindow] = []
+    private var windowNodes: [Int: SCNNode] = [:] // Map window ID to SCNNode
     private var lastWindowUpdateTime: TimeInterval = 0
     private let windowUpdateInterval: TimeInterval = 1.0
     
@@ -118,9 +119,124 @@ class PetController {
             let windows = YabaiAutomation.shared.getVisibleWindows()
             DispatchQueue.main.async {
                 self.visibleWindows = windows
-                // print(" [PetController] Updated Visible Windows: \(windows.count)")
+                self.updateWindowNodes()
             }
         }
+    }
+    
+    private func updateWindowNodes() {
+        // Use current screen dimensions or fallback
+        let screenH = currentScreenSize.height > 0 ? currentScreenSize.height : (NSScreen.main?.frame.height ?? 1080)
+        let screenW = currentScreenSize.width > 0 ? currentScreenSize.width : (NSScreen.main?.frame.width ?? 1920)
+        
+        var activeWindowIDs: Set<Int> = []
+        
+        for window in visibleWindows {
+            // Check if window should be HOLLOW (Height > 75% of screen)
+            // If hollow, we do NOT create a collision node for it.
+            let isHollow = window.frame.h > (screenH * 0.75)
+            
+            if isHollow {
+                continue // Skip creating/updating node -> effectively hollow
+            }
+            
+            activeWindowIDs.insert(window.id)
+            
+            // Calculate Virtual Position
+            // localX assumes window.frame.x is global, so we take modulus for local display offset
+            let localX = window.frame.x.truncatingRemainder(dividingBy: screenW)
+            // space index is 1-based, convert to 0-based index for virtual world slot
+            let virtualX = CGFloat(window.space - 1) * screenW + localX
+            
+            // Convert Y (Yabai Top-Left -> SceneKit Bottom-Left)
+            // Window Bottom Y = ScreenH - (y + h)
+            let bottomY = screenH - (window.frame.y + window.frame.h)
+            let centerY = bottomY + window.frame.h / 2
+            let centerX = virtualX + window.frame.w / 2
+            
+            // Find or Create Node
+            let node: SCNNode
+            if let existing = windowNodes[window.id] {
+                node = existing
+            } else {
+                node = SCNNode()
+                node.name = "window_\(window.id)"
+                
+                // Add Static Physics Body (Rigid Body)
+                node.physicsBody = SCNPhysicsBody(type: .static, shape: nil)
+                node.physicsBody?.categoryBitMask = 2 // Category 2: Windows
+                node.physicsBody?.collisionBitMask = 1 // Collides with Character (1)
+                
+                scene.rootNode.addChildNode(node)
+                windowNodes[window.id] = node
+            }
+            
+            // Update Geometry and Position
+            // We use a Box with depth 100
+            if let box = node.geometry as? SCNBox {
+                if box.width != window.frame.w || box.height != window.frame.h {
+                    box.width = window.frame.w
+                    box.height = window.frame.h
+                    // Update physics shape
+                    node.physicsBody?.physicsShape = SCNPhysicsShape(geometry: box, options: nil)
+                }
+            } else {
+                let box = SCNBox(width: window.frame.w, height: window.frame.h, length: 100, chamferRadius: 0)
+                // Invisible material (but rigid/solid)
+                let mat = SCNMaterial()
+                mat.diffuse.contents = NSColor.clear // Invisible
+                box.materials = [mat]
+                node.geometry = box
+                
+                node.physicsBody?.physicsShape = SCNPhysicsShape(geometry: box, options: nil)
+            }
+            
+            node.position = SCNVector3(centerX, centerY, 0)
+        }
+        
+        // Remove nodes for closed/hidden windows OR windows that became hollow
+        for (id, node) in windowNodes {
+            if !activeWindowIDs.contains(id) {
+                node.removeFromParentNode()
+                windowNodes.removeValue(forKey: id)
+            }
+        }
+    }
+    
+    // Check if a proposed position collides with any rigid window
+    private func checkCollision(at position: SCNVector3) -> Bool {
+        // Simple AABB Check against all window nodes
+        // Character approximation: Box 40x80 centered at position
+        let charWidth: CGFloat = 40 * CGFloat(characterNode.scale.x)
+        let charHeight: CGFloat = 80 * CGFloat(characterNode.scale.y)
+        
+        // Character bounds (centered on X, Y is bottom)
+        let charMinX = position.x - charWidth/2
+        let charMaxX = position.x + charWidth/2
+        let charMinY = position.y
+        let charMaxY = position.y + charHeight
+        
+        for node in windowNodes.values {
+            guard let box = node.geometry as? SCNBox else { continue }
+            // Node position is center
+            let boxW = box.width
+            let boxH = box.height
+            
+            let boxMinX = node.position.x - boxW/2
+            let boxMaxX = node.position.x + boxW/2
+            let boxMinY = node.position.y - boxH/2
+            let boxMaxY = node.position.y + boxH/2
+            
+            // Buffer to allow touching
+            let buffer: CGFloat = 2.0
+            
+            // Intersection Check
+            if charMaxX > boxMinX + buffer && charMinX < boxMaxX - buffer &&
+               charMaxY > boxMinY + buffer && charMinY < boxMaxY - buffer {
+                return true // Collision detected
+            }
+        }
+        return false
     }
     
     private var worldSize: CGSize = .zero
@@ -452,11 +568,20 @@ class PetController {
             
             let moveDistance = moveSpeed * CGFloat(deltaTime)
             
-            if moveDistance < abs(dx) {
-                characterNode.position.x += moveDistance * (dx > 0 ? 1 : -1)
+            // Check collision for next position
+            let nextX = characterNode.position.x + moveDistance * (dx > 0 ? 1 : -1)
+            let proposedPosition = SCNVector3(nextX, characterNode.position.y, characterNode.position.z)
+            
+            if !checkCollision(at: proposedPosition) {
+                if moveDistance < abs(dx) {
+                    characterNode.position.x += moveDistance * (dx > 0 ? 1 : -1)
+                } else {
+                    // Arrived
+                    characterNode.position.x = targetX
+                }
             } else {
-                // Arrived
-                characterNode.position.x = targetX
+                // Blocked by rigid body
+                // Could handle stop animation here
             }
             
             // Clamp to world bounds
@@ -698,7 +823,14 @@ class PetController {
             characterNode.addChildNode(child)
         }
         scene.rootNode.addChildNode(characterNode)
-
+        
+        // Add Kinematic Physics Body to Character
+        // Capsule approx size: height 100, radius 25
+        let charShape = SCNPhysicsShape(geometry: SCNCapsule(capRadius: 20, height: 100), options: nil)
+        characterNode.physicsBody = SCNPhysicsBody(type: .kinematic, shape: charShape)
+        characterNode.physicsBody?.categoryBitMask = 1 // Category 1: Character
+        characterNode.physicsBody?.collisionBitMask = 2 | 4 // Collides with Windows (2) and Floor (4 if set)
+        
         // --- Custom Lighting Setup ---
         
         // 1. Ambient Light (Soft fill)
