@@ -18,6 +18,7 @@ class PetController {
     private var neckStretchAnimation: NeckStretchAnimation?
     private var yawnAnimation: YawnAnimation?
     private var jumpOverAnimation: JumpOverAnimation?
+    private var climbingAnimation: ClimbingAnimation?
     
     // Mouse Behavior Animations (PRIORITY 2)
     private var angryEmotionAnimation: AngryEmotionAnimation?
@@ -32,6 +33,23 @@ class PetController {
     private var isRunning = false
     private var isSlowRunning = false
     private var isJumping = false
+    private var isClimbing = false
+    private var isOnWindowTop = false
+    
+    // Climbing Physics State
+    private var climbingStamina: Float = PetConfig.maxStamina
+    private var climbingState: ClimbingState = .none
+    private var climbingStartTime: TimeInterval = 0
+    private var currentClimbHeight: CGFloat = 0
+    private var totalClimbHeight: CGFloat = 0
+    private var isClimbingResting: Bool = false
+    private var lastClimbingUpdate: TimeInterval = 0
+    private var climbingBaseX: CGFloat = 0 // Store original X position for sway calculation
+    private var isFalling = false
+    private var verticalVelocity: CGFloat = 0.0 // Current falling speed
+    
+    // Window Support State
+    private var currentSupportWindow: YabaiWindow?
     
     // Idle Animation State
     private var lastActivityTime: TimeInterval = 0
@@ -60,6 +78,11 @@ class PetController {
     // Cache of visible spaces per display: [DisplayID (1-based) : SpaceIndex (0-based)]
     var visibleSpacesByDisplay: [Int: Int] = [:]
     
+    // Cache of visible windows
+    private var visibleWindows: [YabaiWindow] = []
+    private var lastWindowUpdateTime: TimeInterval = 0
+    private let windowUpdateInterval: TimeInterval = 1.0
+    
     // Chat Bubble
     private var chatBubble: ChatBubble?
     
@@ -79,12 +102,23 @@ class PetController {
         refreshVisibleSpaces()
     }
     
+
+    
     func refreshVisibleSpaces() {
         DispatchQueue.global(qos: .background).async {
             let map = YabaiAutomation.shared.getVisibleSpacesMap()
             DispatchQueue.main.async {
                 self.visibleSpacesByDisplay = map
-                // print(" [PetController] Updated Visible Spaces: \(map)")
+            }
+        }
+    }
+    
+    func refreshVisibleWindows() {
+        DispatchQueue.global(qos: .background).async {
+            let windows = YabaiAutomation.shared.getVisibleWindows()
+            DispatchQueue.main.async {
+                self.visibleWindows = windows
+                // print(" [PetController] Updated Visible Windows: \(windows.count)")
             }
         }
     }
@@ -140,8 +174,12 @@ class PetController {
         // NSEvent.mouseLocation is in global screen coordinates
         var localX: CGFloat = 0
         var targetSpaceIndex: Int = activeDesktopIndex // Default fallback
-        
         if let screen = NSScreen.screens.first(where: { NSMouseInRect(mouseLoc, $0.frame, false) }) {
+            // Update window data periodically
+            if time - lastWindowUpdateTime > windowUpdateInterval {
+                lastWindowUpdateTime = time
+                refreshVisibleWindows()
+            }
             // Calculate X relative to that screen's origin
             localX = mouseLoc.x - screen.frame.minX
             
@@ -179,8 +217,52 @@ class PetController {
         // Normalize distance for logic checks
         let effectiveDistance = abs(dx) / scaleFactor
         
+        // Edge Detection - Check if character walked off window top
+        // This must run EVERY frame, not just when moving
+        if isOnWindowTop, let window = currentSupportWindow {
+            let currentX = characterNode.position.x
+            let winX = window.frame.x
+            let winW = window.frame.w
+            
+            // Allow small buffer
+            let buffer: CGFloat = 10.0 
+            
+            if currentX < winX - buffer || currentX > winX + winW + buffer {
+                // Walked off!
+                startFalling()
+            }
+        }
+        
+        // Gravity Logic
+        if isFalling {
+            // Apply gravity
+            verticalVelocity += PetConfig.gravity * CGFloat(deltaTime)
+            verticalVelocity = min(verticalVelocity, PetConfig.maxFallSpeed)
+            
+            let fallDist = verticalVelocity * CGFloat(deltaTime)
+            let newY = characterNode.position.y - fallDist
+            
+            if newY <= 0 {
+                // Landed on ground
+                characterNode.position.y = 0
+                isFalling = false
+                verticalVelocity = 0.0
+                // Trigger landing animation? (Stand up)
+                // For now simple reset
+            } else {
+                characterNode.position.y = newY
+            }
+        }
+        
         if abs(dx) > threshold {
             // PRIORITY 1: MOVEMENT ANIMATIONS - Always override idle animations
+            
+            // STRICT PRIORITY CHECK: If Climbing or Falling, IGNORE horizontal movement requests
+            // This prevents "stuck at mid" issues where walk animation tries to override climb animation
+            guard !isClimbing && !isFalling else {
+                return
+            }
+            
             // Forcefully stop ALL idle animations and mouse behaviors immediately
             stopAllIdleAnimations()
             stopAllMouseBehaviors()
@@ -195,6 +277,83 @@ class PetController {
             longIdleTriggered = false
             
             let distance = abs(dx)
+            
+            // Climbing Trigger Logic
+            // Check if mouse is near any window edge
+            if !isClimbing && !isJumping && !isOnWindowTop && !isFalling {
+                // Determine if we are near a window edge
+                for window in visibleWindows {
+                    // Check if window is on the same screen (approximate check using frame)
+                    // We need to convert window frame (global coordinates, usually) to our coordinate system
+                    // Yabai returns global coordinates where (0,0) is top-left of main screen.
+                    // Accessing `window.frame`
+                    
+                    // Simple X check: is mouse near window left/right edge?
+                    // And is mouse vertical position within window vertical range?
+                    // In Cocoa, Y is bottom-up. Yabai usually returns top-down Y.
+                    // Need to be careful with Y coordinates.
+                    // Let's rely on X for now to trigger climbing UP the side.
+                    
+                    let winX = window.frame.x
+                    let winW = window.frame.w
+                    let winY = window.frame.y
+                    let winH = window.frame.h
+                    
+                    let leftEdge = winX
+                    let rightEdge = winX + winW
+                    
+                    // Check if mouse is near left or right edge
+                    let nearLeft = abs(mouseLoc.x - leftEdge) < PetConfig.climbingTriggerDistance
+                    let nearRight = abs(mouseLoc.x - rightEdge) < PetConfig.climbingTriggerDistance
+                    
+                    if nearLeft || nearRight {
+                        // Check if mouse is vertically within window range
+                        // Convert window Y (top-down) to our Y (bottom-up)
+                        // screenSize.height is total screen height
+                        // window.frame.y is distance from top of screen
+                        // So bottom of window in our coords is: screenSize.height - (window.frame.y + window.frame.h)
+                        // Top of window in our coords is: screenSize.height - window.frame.y
+                        
+                        let screenHeight = screenSize.height > 0 ? screenSize.height : (NSScreen.main?.frame.height ?? 1080)
+                        let windowBottomY = screenHeight - (winY + winH)
+                        let windowTopY = screenHeight - winY
+                        
+                        // Check if mouse Y is within window vertical range (with some buffer)
+                        let buffer: CGFloat = 50.0
+                        if mouseLoc.y >= windowBottomY - buffer && mouseLoc.y <= windowTopY + buffer {
+                            // We are near a climbable edge!
+                            // Determine which edge
+                            let facingRight = nearLeft
+                            
+                            // Prevent climbing at screen edges
+                            guard let screen = NSScreen.main else { continue }
+                            let screenFrame = screen.frame
+                            
+                            // Check if this window edge is at a screen edge
+                            let windowEdgeX = facingRight ? leftEdge : rightEdge
+                            let isAtScreenEdge = (abs(windowEdgeX - screenFrame.minX) < 5) || (abs(windowEdgeX - screenFrame.maxX) < 5)
+                            
+                            if isAtScreenEdge {
+                                continue // Skip this edge
+                            }
+                            
+                            // SAFETY CHECK: Only start climbing if character is actually NEAR the edge
+                            // otherwise, let them walk/run to it naturally first
+                            let distToEdge = abs(characterNode.position.x - windowEdgeX)
+                            if distToEdge > 50.0 {
+                                continue // Too far, keep walking/running
+                            }
+                            
+                            // Start climbing!
+                            startClimbing(window: window, facingRight: facingRight) {
+                                // Completion: character is now on top of window
+                                // No need to do anything here, state is managed in stopClimbing
+                            }
+                            break
+                        }
+                    }
+                }
+            }
             
             // Jump Logic: 
             // 1. If already jumping, check if we finished the jump (moved past boundary + prepare dist)
@@ -315,8 +474,8 @@ class PetController {
             if isSlowRunning { slowRunAnimation?.stop(); isSlowRunning = false }
             if isJumping { jumpOverAnimation?.stop(); isJumping = false }
             
-            // Double-check: If any movement animation is still active, don't play other animations
-            if isWalking || isRunning || isSlowRunning || isJumping {
+            // Double-check: If any movement animation is still active or falling, don't play other animations
+            if isWalking || isRunning || isSlowRunning || isJumping || isClimbing || isFalling {
                 return
             }
             
@@ -376,7 +535,7 @@ class PetController {
                     guard let self = self else { return }
                     
                     // STRICT PRIORITY CHECK: Don't start animation if movement started during rotation
-                    guard !self.isWalking && !self.isRunning && !self.isSlowRunning && !self.isJumping else {
+                    guard !self.isWalking && !self.isRunning && !self.isSlowRunning && !self.isJumping && !self.isClimbing && !self.isFalling else {
                         self.isPerformingLongIdle = false
                         return
                     }
@@ -393,7 +552,7 @@ class PetController {
                     // Return to idle breathing after animation completes (estimate 3 seconds)
                     DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
                         // STRICT PRIORITY CHECK: Don't restart idle if movement started
-                        guard !self.isWalking && !self.isRunning && !self.isSlowRunning && !self.isJumping else {
+                        guard !self.isWalking && !self.isRunning && !self.isSlowRunning && !self.isJumping && !self.isClimbing && !self.isFalling else {
                             self.isPerformingLongIdle = false
                             return
                         }
@@ -431,7 +590,7 @@ class PetController {
                         guard let self = self else { return }
                         
                         // STRICT PRIORITY CHECK: Don't start animation if movement started during rotation
-                        guard !self.isWalking && !self.isRunning && !self.isSlowRunning && !self.isJumping else {
+                        guard !self.isWalking && !self.isRunning && !self.isSlowRunning && !self.isJumping && !self.isClimbing && !self.isFalling else {
                             self.isPerformingLongIdle = false
                             return
                         }
@@ -445,7 +604,7 @@ class PetController {
                         // Return to idle breathing after animation completes
                         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                             // STRICT PRIORITY CHECK: Don't restart idle if movement started
-                            guard !self.isWalking && !self.isRunning && !self.isSlowRunning && !self.isJumping else {
+                            guard !self.isWalking && !self.isRunning && !self.isSlowRunning && !self.isJumping && !self.isClimbing && !self.isFalling else {
                                 self.isPerformingLongIdle = false
                                 return
                             }
@@ -478,7 +637,7 @@ class PetController {
                     guard let self = self else { return }
                     
                     // STRICT PRIORITY CHECK: Don't start animation if movement started during rotation
-                    guard !self.isWalking && !self.isRunning && !self.isSlowRunning && !self.isJumping else {
+                    guard !self.isWalking && !self.isRunning && !self.isSlowRunning && !self.isJumping && !self.isClimbing && !self.isFalling else {
                         self.isLookingAround = false
                         return
                     }
@@ -488,7 +647,7 @@ class PetController {
                     // Return to idle breathing after look-around completes (estimate 2 seconds)
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                         // STRICT PRIORITY CHECK: Don't restart idle if movement started
-                        guard !self.isWalking && !self.isRunning && !self.isSlowRunning && !self.isJumping else {
+                        guard !self.isWalking && !self.isRunning && !self.isSlowRunning && !self.isJumping && !self.isClimbing && !self.isFalling else {
                             self.lookAroundAnimation?.stop()
                             self.isLookingAround = false
                             return
@@ -512,6 +671,9 @@ class PetController {
         
         // Always update chat bubble position to keep it aligned with character
         updateChatBubblePosition()
+        
+        // Recover stamina when not climbing
+        recoverStamina(deltaTime: deltaTime)
     }
     
     private func setupSceneContent() {
@@ -579,6 +741,11 @@ class PetController {
         let floorNode = SCNNode(geometry: floorGeometry)
         floorNode.eulerAngles.x = -.pi / 2
         floorNode.position = SCNVector3(0, 0, 0)
+        
+        // Mark as rigid surface for physics interactions
+        floorNode.name = "rigidSurface"
+        floorNode.physicsBody = SCNPhysicsBody(type: .static, shape: nil)
+        
         scene.rootNode.addChildNode(floorNode)
         
         // Show initial chat bubble with a large paragraph
@@ -771,11 +938,340 @@ class PetController {
         oneHandWaveAnimation = OneHandWaveAnimation.setup(for: characterNode)
         pointingGestureAnimation = PointingGestureAnimation.setup(for: characterNode)
         surpriseAnimation = SurpriseAnimation.setup(for: characterNode)
+        
+        // Climbing Animation
+        climbingAnimation = ClimbingAnimation.setup(for: characterNode)
     }
     
     private func startSequence(size: CGSize) {
         // This function is currently disabled and not used
         // Mouse following logic is used instead
+    }
+    
+    // MARK: - Climbing Logic
+    
+    func startClimbing(window: YabaiWindow, facingRight: Bool, completion: @escaping () -> Void) {
+        guard !isClimbing else { return }
+        
+        stopAllIdleAnimations()
+        stopAllMouseBehaviors()
+        
+        isClimbing = true
+        currentSupportWindow = window
+        
+        // Orient towards the wall (Inside -> Facing Edge)
+        characterNode.eulerAngles.y = facingRight ? -.pi / 2 : .pi / 2
+        
+        // Calculate window edge X position with alignment offset
+        // If facing right (Left Edge of window), we want to be inside (to the right of edge)
+        // If facing left (Right Edge of window), we want to be inside (to the left of edge)
+        let offset = facingRight ? PetConfig.climbingAlignmentOffset : -PetConfig.climbingAlignmentOffset
+        let windowEdgeX = (facingRight ? window.frame.x : (window.frame.x + window.frame.w)) + offset
+        
+        // Store base X for sway calculations
+        climbingBaseX = windowEdgeX
+        
+        // Move character to window edge first (if not already there)
+        let targetPosition = SCNVector3(windowEdgeX, characterNode.position.y, characterNode.position.z)
+        let moveToEdge = SCNAction.move(to: targetPosition, duration: 0.2)
+        moveToEdge.timingMode = .easeOut
+        
+        characterNode.runAction(moveToEdge) { [weak self] in
+            guard let self = self, self.isClimbing else { return }
+            
+            // Now calculate climb height from current position
+            let screenHeight = self.currentScreenSize.height > 0 ? self.currentScreenSize.height : (NSScreen.main?.frame.height ?? 1080)
+            let windowTopY = screenHeight - window.frame.y
+            let currentY = self.characterNode.position.y
+            
+            // Calculate effective climb distance, stopping short for the pull-up animation
+            // This prevents the character from climbing with feet all the way to the top
+            let climbDistance = windowTopY - currentY - PetConfig.climbingPullUpOffset
+            
+            // Safety check
+            guard climbDistance > 0 else {
+                self.isClimbing = false
+                self.currentSupportWindow = nil
+                return
+            }
+            
+            // Start climb animation with overlap
+            self.climbingAnimation?.startClimb(overlap: 0.2) { [weak self] in
+                guard let self = self, self.isClimbing else { return }
+                
+                // FLIP DIRECTION for the loop phase
+                // User requirement: "flip the character like its climbing left caing to do right facing"
+                // Meaning when climbing, it should face the OPPOSITE way it started.
+                // Start: Face Wall -> Loop: Face Away (or vice versa depending on asset)
+                // We flip 180 degrees from the start direction.
+                
+                let currentYAngle = self.characterNode.eulerAngles.y
+                // self.characterNode.eulerAngles.y = currentYAngle + .pi
+                
+                self.climbingAnimation?.startLoop()
+                
+                // Simple climb action - just move up
+                let duration = TimeInterval(climbDistance / PetConfig.climbSpeed)
+                let climbAction = SCNAction.moveBy(x: 0, y: climbDistance, z: 0, duration: duration)
+                climbAction.timingMode = .linear
+                
+                self.characterNode.runAction(climbAction) {
+                    self.stopClimbing(completion: completion)
+                }
+            }
+        }
+    }
+    
+    func stopClimbing(completion: @escaping () -> Void) {
+        guard isClimbing, let window = currentSupportWindow else { completion(); return }
+        
+        characterNode.removeAllActions() 
+        
+        climbingAnimation?.stopLoop()
+        
+        // Determine side and direction to move onto ledge
+        let winCenter = window.frame.x + (window.frame.w / 2)
+        let isLeftEdge = climbingBaseX < winCenter
+        
+        // Target: move slightly inside the window to avoid immediately falling off
+        let safeBuffer: CGFloat = 30.0
+        let targetX = isLeftEdge ? (window.frame.x + safeBuffer) : (window.frame.x + window.frame.w - safeBuffer)
+        let moveDistanceX = targetX - characterNode.position.x
+        
+        // Target Y: Top of window (should match where we want to land)
+        let screenHeight = self.currentScreenSize.height > 0 ? self.currentScreenSize.height : (NSScreen.main?.frame.height ?? 1080)
+        let targetY = screenHeight - window.frame.y
+        let moveDistanceY = targetY - characterNode.position.y
+        
+        // Animate onto ledge concurrently with end animation
+        // Duration matches roughly with the pull-up animation
+        let pullUpDuration: TimeInterval = 1.0
+        let moveAction = SCNAction.moveBy(x: moveDistanceX, y: moveDistanceY, z: 0, duration: pullUpDuration)
+        moveAction.timingMode = .easeOut
+        
+        characterNode.runAction(moveAction)
+        
+        // Flip rotation for end animation since it has opposite orientation
+        characterNode.eulerAngles.y += .pi
+        
+        // Stop loop with fade and start end with blend
+        climbingAnimation?.stopLoop(fadeDuration: 0.2)
+        climbingAnimation?.endClimb(blendInDuration: 0.2) { [weak self] in
+            guard let self = self else { return }
+            self.isClimbing = false
+            
+            // Transition to Window Top
+            self.isOnWindowTop = true
+            
+            // Ensure positions are exact
+            if let win = self.currentSupportWindow {
+                   let screenHeight = self.currentScreenSize.height > 0 ? self.currentScreenSize.height : (NSScreen.main?.frame.height ?? 1080)
+                   self.characterNode.position.y = screenHeight - win.frame.y
+                   self.characterNode.position.x = targetX
+            }
+            
+            completion()
+        }
+    }
+    
+    func startFalling() {
+        guard !isFalling else { return }
+        
+        stopAllIdleAnimations() // Stop anything like breathing if we were idle
+        // Might want a falling animation eventually
+        
+        isOnWindowTop = false
+        currentSupportWindow = nil
+        isFalling = true
+        verticalVelocity = 0.0 // Reset velocity
+        
+        // Reset climbing state
+        climbingState = .none
+        climbingStamina = min(PetConfig.maxStamina, climbingStamina + 20.0) // Small stamina boost from rest
+    }
+    
+    // MARK: - Climbing Physics
+    
+    /// Update climbing physics - called every frame while climbing
+    private func updateClimbingPhysics(deltaTime: TimeInterval, time: TimeInterval) {
+        guard isClimbing, let window = currentSupportWindow else { return }
+        
+        // Calculate progress
+        let progress = currentClimbHeight / max(1.0, totalClimbHeight)
+        
+        // Update stamina
+        updateClimbingStamina(deltaTime: deltaTime)
+        
+        // Check for slip events (unless already slipping or resting)
+        if climbingState != .slipping && climbingState != .resting {
+            let shouldSlip = ClimbingPhysics.shouldSlip(
+                stamina: climbingStamina,
+                deltaTime: deltaTime,
+                heightClimbed: currentClimbHeight,
+                totalHeight: totalClimbHeight
+            )
+            
+            if shouldSlip {
+                handleClimbingSlip()
+                return // Skip movement this frame
+            }
+        }
+        
+        // Check for rest events (unless already resting or slipping)
+        if climbingState != .resting && climbingState != .slipping {
+            let timeClimbing = time - climbingStartTime
+            let shouldRest = ClimbingPhysics.shouldRest(
+                stamina: climbingStamina,
+                timeClimbing: timeClimbing,
+                deltaTime: deltaTime
+            )
+            
+            if shouldRest {
+                initiateClimbingRest()
+                return // Skip movement this frame
+            }
+        }
+        
+        // Update climbing state
+        let newState = ClimbingPhysics.determineNextState(
+            currentState: climbingState,
+            stamina: climbingStamina,
+            progress: progress,
+            isSlipping: false,
+            shouldRest: false
+        )
+        
+        if newState != climbingState {
+            transitionClimbingState(to: newState)
+        }
+        
+        // Calculate climbing speed based on physics
+        let climbSpeed = ClimbingPhysics.calculateSpeed(
+            stamina: climbingStamina,
+            heightClimbed: currentClimbHeight,
+            totalHeight: totalClimbHeight,
+            state: climbingState
+        )
+        
+        // Update animation speed to match physics
+        let speedMultiplier = Float(climbSpeed / PetConfig.climbSpeed)
+        climbingAnimation?.updateClimbSpeed(multiplier: speedMultiplier)
+        
+        // Calculate movement for this frame
+        let verticalMovement = climbSpeed * CGFloat(deltaTime)
+        
+        // Add horizontal sway for realism
+        let timeClimbing = time - climbingStartTime
+        let sway = ClimbingPhysics.calculateSway(
+            timeClimbing: timeClimbing,
+            stamina: climbingStamina,
+            heightClimbed: currentClimbHeight
+        )
+        
+        // Apply movement (allow movement in all states except resting)
+        if climbingState != .resting {
+            // Even in slipping state, we want controlled movement
+            characterNode.position.y += verticalMovement
+            
+            // Apply subtle sway relative to base X position
+            characterNode.position.x = climbingBaseX + sway
+            
+            currentClimbHeight += verticalMovement
+        }
+        
+        // Check if reached top (with small buffer for floating point errors)
+        if currentClimbHeight >= totalClimbHeight * 0.95 || progress >= 0.95 {
+            stopClimbing {
+                // Climbing complete
+            }
+        }
+    }
+    
+    /// Update stamina based on climbing state
+    private func updateClimbingStamina(deltaTime: TimeInterval) {
+        let drainRate = ClimbingPhysics.calculateStaminaDrain(
+            climbSpeed: PetConfig.climbSpeed,
+            windowHeight: totalClimbHeight,
+            state: climbingState
+        )
+        
+        climbingStamina -= drainRate * Float(deltaTime)
+        climbingStamina = max(0, min(PetConfig.maxStamina, climbingStamina))
+        
+        // Update animation to reflect tiredness
+        climbingAnimation?.setTiredState(isTired: climbingStamina < PetConfig.tiredThreshold)
+    }
+    
+    /// Handle slip event
+    private func handleClimbingSlip() {
+        guard climbingState != .slipping else { return }
+        
+        climbingState = .slipping
+        
+        // Play slip recovery animation
+        climbingAnimation?.playSlipRecovery { [weak self] in
+            guard let self = self else { return }
+            // Return to previous state after recovery
+            self.climbingState = self.climbingStamina > PetConfig.tiredThreshold ? .steady : .tired
+        }
+        
+        // Slide down slightly
+        let slipAmount = PetConfig.slipDistance
+        characterNode.position.y -= slipAmount
+        currentClimbHeight = max(0, currentClimbHeight - slipAmount)
+        
+        // Slipping costs extra stamina (panic)
+        climbingStamina -= 5.0
+        climbingStamina = max(0, climbingStamina)
+    }
+    
+    /// Initiate rest period
+    private func initiateClimbingRest() {
+        guard climbingState != .resting else { return }
+        
+        climbingState = .resting
+        isClimbingResting = true
+        
+        let restDuration = ClimbingPhysics.getRestDuration(stamina: climbingStamina)
+        
+        climbingAnimation?.playRest(duration: restDuration) { [weak self] in
+            guard let self = self else { return }
+            self.isClimbingResting = false
+            // Return to appropriate state after rest
+            self.climbingState = self.climbingStamina > PetConfig.tiredThreshold ? .steady : .tired
+        }
+    }
+    
+    /// Transition between climbing states
+    private func transitionClimbingState(to newState: ClimbingState) {
+        let oldState = climbingState
+        climbingState = newState
+        
+        // Handle state-specific animations
+        switch newState {
+        case .reaching:
+            // Just slow down animation, don't stop climbing
+            climbingAnimation?.playReaching { }
+        case .pullingUp:
+            // Final animation, but let physics complete the climb
+            climbingAnimation?.playPullUp { }
+        case .tired:
+            climbingAnimation?.setTiredState(isTired: true)
+        case .steady:
+            if oldState == .tired {
+                climbingAnimation?.setTiredState(isTired: false)
+            }
+        default:
+            break
+        }
+    }
+    
+    /// Recover stamina when on ground or window top
+    private func recoverStamina(deltaTime: TimeInterval) {
+        if !isClimbing && !isFalling {
+            climbingStamina += PetConfig.staminaRecoveryRate * Float(deltaTime)
+            climbingStamina = min(PetConfig.maxStamina, climbingStamina)
+        }
     }
     
     // MARK: - Helper Methods

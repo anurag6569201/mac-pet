@@ -27,6 +27,33 @@ struct YabaiSpace: Codable {
     }
 }
 
+struct YabaiFrame: Codable {
+    let x: CGFloat
+    let y: CGFloat
+    let w: CGFloat
+    let h: CGFloat
+}
+
+struct YabaiWindow: Codable {
+    let id: Int
+    let pid: Int
+    let app: String
+    let title: String
+    let frame: YabaiFrame
+    let display: Int
+    let space: Int
+    let isVisible: Bool
+    let isMinimized: Bool
+    let isHidden: Bool
+    
+    enum CodingKeys: String, CodingKey {
+        case id, pid, app, title, frame, display, space
+        case isVisible = "is-visible"
+        case isMinimized = "is-minimized"
+        case isHidden = "is-hidden"
+    }
+}
+
 class YabaiAutomation {
     static let shared = YabaiAutomation()
     
@@ -140,6 +167,32 @@ class YabaiAutomation {
         
         // Note: This requires the window ID, but we'll use a different approach
         // We'll use the window's accessibility identifier or try a different method
+    }
+    
+    func getAllWindows() -> [YabaiWindow] {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: yabaiPath)
+        process.arguments = ["-m", "query", "--windows"]
+        
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        
+        do {
+            try process.run()
+            process.waitUntilExit()
+            
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            if process.terminationStatus == 0 {
+                return try JSONDecoder().decode([YabaiWindow].self, from: data)
+            }
+        } catch {
+            print(" [YabaiError] Failed to query windows: \(error)")
+        }
+        return []
+    }
+    
+    func getVisibleWindows() -> [YabaiWindow] {
+        return getAllWindows().filter { $0.isVisible && !$0.isMinimized && !$0.isHidden }
     }
     
     // MARK: - Query Logic
