@@ -35,6 +35,8 @@ class PetController {
     private var isJumping = false
     private var isClimbing = false
     private var isOnWindowTop = false
+    private var isSafetyJumping = false
+
     
     // Climbing Physics State
     private var climbingStamina: Float = PetConfig.maxStamina
@@ -135,13 +137,12 @@ class PetController {
         var activeWindowIDs: Set<Int> = []
         
         for window in visibleWindows {
-            // Check if window should be HOLLOW (Height > 75% of screen)
-            // If hollow, we do NOT create a collision node for it.
+            // Treat all windows as potentially walkable surfaces.
+            // If window is "HOLLOW" (Height > 75% of screen), we create a thin CAP at the top.
+            // This allows the pet to pass through the body but land on top.
+            // If "RIGID" (Normal), we act as a solid block.
             let isHollow = window.frame.h > (screenH * 0.75)
-            
-            if isHollow {
-                continue // Skip creating/updating node -> effectively hollow
-            }
+            let targetHeight = isHollow ? 20.0 : window.frame.h
             
             activeWindowIDs.insert(window.id)
             
@@ -152,9 +153,10 @@ class PetController {
             let virtualX = CGFloat(window.space - 1) * screenW + localX
             
             // Convert Y (Yabai Top-Left -> SceneKit Bottom-Left)
-            // Window Bottom Y = ScreenH - (y + h)
-            let bottomY = screenH - (window.frame.y + window.frame.h)
-            let centerY = bottomY + window.frame.h / 2
+            // Top of window in SceneKit coords = screenH - window.frame.y
+            // Center Y of the node = Top - (targetHeight / 2)
+            let topY = screenH - window.frame.y
+            let centerY = topY - (targetHeight / 2)
             let centerX = virtualX + window.frame.w / 2
             
             // Find or Create Node
@@ -175,17 +177,16 @@ class PetController {
             }
             
             // Update Geometry and Position
-            // We use a Box with depth 100
             if let box = node.geometry as? SCNBox {
-                if box.width != window.frame.w || box.height != window.frame.h {
+                if box.width != window.frame.w || box.height != targetHeight {
                     box.width = window.frame.w
-                    box.height = window.frame.h
+                    box.height = targetHeight
                     // Update physics shape
                     node.physicsBody?.physicsShape = SCNPhysicsShape(geometry: box, options: nil)
                 }
             } else {
-                let box = SCNBox(width: window.frame.w, height: window.frame.h, length: 100, chamferRadius: 0)
-                // Invisible material (but rigid/solid)
+                let box = SCNBox(width: window.frame.w, height: targetHeight, length: 100, chamferRadius: 0)
+                // Invisible material
                 let mat = SCNMaterial()
                 mat.diffuse.contents = NSColor.clear // Invisible
                 box.materials = [mat]
@@ -197,7 +198,7 @@ class PetController {
             node.position = SCNVector3(centerX, centerY, 0)
         }
         
-        // Remove nodes for closed/hidden windows OR windows that became hollow
+        // Remove nodes for closed/hidden windows OR windows that became hollow (if logic changed)
         for (id, node) in windowNodes {
             if !activeWindowIDs.contains(id) {
                 node.removeFromParentNode()
@@ -220,8 +221,13 @@ class PetController {
         let charMinY = position.y
         let charMaxY = position.y + charHeight
         
-        for (id, node) in windowNodes {
-            guard let box = node.geometry as? SCNBox else { continue }
+        // Collect all collision candidates
+        var collisions: [YabaiWindow] = []
+        
+        for window in visibleWindows {
+            guard let node = windowNodes[window.id],
+                  let box = node.geometry as? SCNBox else { continue }
+            
             // Node position is center
             let boxW = box.width
             let boxH = box.height
@@ -237,10 +243,65 @@ class PetController {
             // Intersection Check
             if charMaxX > boxMinX + buffer && charMinX < boxMaxX - buffer &&
                charMaxY > boxMinY + buffer && charMinY < boxMaxY - buffer {
-                return id // Collision detected with window ID
+                collisions.append(window)
             }
         }
-        return nil
+        
+        // No collisions?
+        if collisions.isEmpty { return nil }
+        
+        // Sort collisions by Z-order (Index in visibleWindows represents stack order, 0 is top)
+        // We want the TOP-most window that is relevant.
+        // visibleWindows is already sorted by Yabai (usually).
+        // Let's ensure we are picking based on visibleWindows order.
+        let sortedCollisions = collisions.sorted { w1, w2 in
+            let idx1 = visibleWindows.firstIndex(where: { $0.id == w1.id }) ?? Int.max
+            let idx2 = visibleWindows.firstIndex(where: { $0.id == w2.id }) ?? Int.max
+            return idx1 < idx2 // Lower index = Higher Z-order (Top)
+        }
+        
+        // If we are currently standing on a window, we should ignore any window that is BEHIND it.
+        if isOnWindowTop, let supportWindow = currentSupportWindow {
+            let supportIndex = visibleWindows.firstIndex(where: { $0.id == supportWindow.id }) ?? Int.max
+            
+            // Filter out any collision that is BEHIND (higher index) the support window
+            // EXCEPT if it is the support window itself? (Wait, collision check is usually for movement blocking)
+            // If we are ON TOP of a window, we shouldn't collide with IT physically as a wall unless we hit a side... 
+            // implementation detail: checkCollision prevents x-movement.
+            
+            // We only care about windows IN FRONT of the support window.
+            // OR windows that are the support window itself? No, we walk ON TOP of support.
+            
+            for window in sortedCollisions {
+                let index = visibleWindows.firstIndex(where: { $0.id == window.id }) ?? Int.max
+                
+                // If this window is BEHIND or SAME level as support, ignore it as an obstacle?
+                // Actually, if it is SAME level, it IS the support window (or same layer).
+                // Usually we shouldn't collide with the thing we are standing on unless we hit a "wall" part of it?
+                // But our windows are simple boxes. Colliding with support window usually means we are 'inside' it?
+                // No, checkCollision is called with `nextX`. If we walk INTO the support window's bounds? 
+                // Since we are ON TOP, we are logically 'above' it. `checkCollision` checks 3D intersection.
+                // If `isOnWindowTop`, our Y is `supportWindow.topY`. 
+                // The box extends down. So our feet touch the top. 
+                // Strictly speaking, we might intersect the top edge slightly.
+                
+                if index >= supportIndex {
+                     // This window is behind or equal to support.
+                     // It shouldn't block us.
+                     continue
+                }
+                
+                // If we found a window strictly in front (lower index), that's a blocker!
+                return window.id
+            }
+            
+            return nil // No valid blockers found in front
+            
+        } else {
+            // Not on any window (Ground or falling)
+            // Return the top-most collision
+            return sortedCollisions.first?.id
+        }
     }
     
     private var worldSize: CGSize = .zero
@@ -388,7 +449,12 @@ class PetController {
             
             if currentX < winX - buffer || currentX > winX + winW + buffer {
                 // Walked off!
-                startFalling()
+                // If moving significantly, perform a safety jump
+                if abs(dx) > PetConfig.mouseDeadZoneRadius * scaleFactor {
+                    performSafetyJump()
+                } else {
+                    startFalling()
+                }
             }
         }
         
@@ -401,13 +467,64 @@ class PetController {
             let fallDist = verticalVelocity * CGFloat(deltaTime)
             let newY = characterNode.position.y - fallDist
             
-            if newY <= 0 {
+            // Check for landing on windows
+            var landingY: CGFloat? = nil
+            var landingWindow: YabaiWindow? = nil
+            
+            let charWidth: CGFloat = 40 * CGFloat(characterNode.scale.x)
+            let charMinX = characterNode.position.x - charWidth/2
+            let charMaxX = characterNode.position.x + charWidth/2
+            
+            for (id, node) in windowNodes {
+                guard let box = node.geometry as? SCNBox else { continue }
+                
+                // Get absolute top Y of the physical surface
+                let nodeTopY = node.position.y + box.height/2
+                let nodeMinX = node.position.x - box.width/2
+                let nodeMaxX = node.position.x + box.width/2
+                
+                // Horizontal buffer
+                let buffer: CGFloat = 15.0
+                
+                if charMaxX > nodeMinX - buffer && charMinX < nodeMaxX + buffer {
+                    // Check if we crossed the top edge
+                    let oldY = characterNode.position.y
+                    
+                    // Interaction logic:
+                    // 1. We must be falling (velocity > 0 downwards, handled by isFalling)
+                    // 2. Prior Position >= Surface (or very close)
+                    // 3. New Position <= Surface
+                    if oldY >= nodeTopY - 5.0 && newY <= nodeTopY + 5.0 {
+                        // We found a landing candidate
+                        // Pick the highest one if multiple overlap (though rare for standard windows)
+                        if landingY == nil || nodeTopY > landingY! {
+                            landingY = nodeTopY
+                            landingWindow = visibleWindows.first(where: { $0.id == id })
+                        }
+                    }
+                }
+            }
+            
+            if let targetY = landingY, let window = landingWindow {
+                // Landed on window
+                characterNode.position.y = targetY
+                isFalling = false
+                isSafetyJumping = false
+                verticalVelocity = 0.0
+                
+                isOnWindowTop = true
+                currentSupportWindow = window
+                lastSupportWindowFrame = window.frame
+            } else if newY <= 0 {
                 // Landed on ground
                 characterNode.position.y = 0
                 isFalling = false
+                isSafetyJumping = false
                 verticalVelocity = 0.0
-                // Trigger landing animation? (Stand up)
-                // For now simple reset
+                
+                isOnWindowTop = false
+                currentSupportWindow = nil
+                lastSupportWindowFrame = nil
             } else {
                 characterNode.position.y = newY
             }
@@ -418,7 +535,8 @@ class PetController {
             
             // STRICT PRIORITY CHECK: If Climbing or Falling, IGNORE horizontal movement requests
             // This prevents "stuck at mid" issues where walk animation tries to override climb animation
-            guard !isClimbing && !isFalling else {
+            // EXCEPTION: Allow movement if Safety Jumping
+            guard !isClimbing && (!isFalling || isSafetyJumping) else {
                 return
             }
             
@@ -518,9 +636,10 @@ class PetController {
             // 1. If already jumping, check if we finished the jump (moved past boundary + prepare dist)
             // 2. If not jumping, but transitioning space, check if close enough to start jump
             
-            var shouldBeJumping = false
+            var shouldBeJumping = isSafetyJumping
             
-            if isJumping, let boundaryX = activeJumpBoundaryX {
+            if !shouldBeJumping {
+                if isJumping, let boundaryX = activeJumpBoundaryX {
                 let distToBoundary = abs(characterNode.position.x - boundaryX)
                 // Continue jumping if we are within range OR if we haven't crossed yet (handled by direction check implicitly via distance)
                 // Actually, simple check: are we still within the "jump zone"?
@@ -550,6 +669,8 @@ class PetController {
                     shouldBeJumping = true
                     activeJumpBoundaryX = boundaryX
                 }
+            }
+            
             }
             
             if shouldBeJumping {
@@ -1159,6 +1280,9 @@ class PetController {
         stopAllMouseBehaviors()
         
         isClimbing = true
+        isFalling = false
+        isSafetyJumping = false
+        verticalVelocity = 0.0
         currentSupportWindow = window
         
         // Orient towards the wall (Inside -> Facing Edge)
@@ -1282,6 +1406,28 @@ class PetController {
             
             completion()
         }
+    }
+    
+    private func performSafetyJump() {
+        guard !isFalling else { return }
+        
+        stopAllIdleAnimations()
+        if isWalking { walkingAnimation?.stop(); isWalking = false }
+        if isSlowRunning { slowRunAnimation?.stop(); isSlowRunning = false }
+        if isRunning { fastRunAnimation?.stop(); isRunning = false }
+        
+        isOnWindowTop = false
+        currentSupportWindow = nil
+        lastSupportWindowFrame = nil
+        isFalling = true
+        isSafetyJumping = true
+        isJumping = true
+        climbingState = .none
+        
+        // Initial upward velocity
+        verticalVelocity = -400.0
+        
+        jumpOverAnimation?.start()
     }
     
     func startFalling() {
