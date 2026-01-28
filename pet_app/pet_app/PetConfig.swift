@@ -78,7 +78,7 @@ struct PetConfig {
     static let jumpOverAnimationFile = "transition/jump-over.dae"
     
     // Climbing Animation Files
-    static let climbingStartAnimationFile = "climbing/climbing-start.dae"
+    static let climbingStartAnimationFile = "climbing/climbing-mid.dae"
     static let climbingMidAnimationFile = "climbing/climbing-mid.dae"
     static let climbingEndAnimationFile = "climbing/climbing-end.dae"
     

@@ -190,6 +190,29 @@ class YabaiAutomation {
         }
         return []
     }
+
+    func getWindow(id: Int) -> YabaiWindow? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: yabaiPath)
+        process.arguments = ["-m", "query", "--windows", "--window", "\(id)"]
+        
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        
+        do {
+            try process.run()
+            process.waitUntilExit()
+            
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            if process.terminationStatus == 0 {
+                return try JSONDecoder().decode(YabaiWindow.self, from: data)
+            }
+        } catch {
+             // Suppress error for normal cases (window closed etc)
+             // print(" [YabaiError] Failed to query window \(id): \(error)")
+        }
+        return nil
+    }
     
     func getVisibleWindows() -> [YabaiWindow] {
         return getAllWindows().filter { $0.isVisible && !$0.isMinimized && !$0.isHidden }

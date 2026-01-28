@@ -50,6 +50,9 @@ class PetController {
     
     // Window Support State
     private var currentSupportWindow: YabaiWindow?
+    private var lastSupportWindowFrame: YabaiFrame? // To track movement
+    private var lastWindowPollTime: TimeInterval = 0
+    private let windowPollInterval: TimeInterval = 0.05 // 20 FPS polling for riding
     
     // Idle Animation State
     private var lastActivityTime: TimeInterval = 0
@@ -204,7 +207,8 @@ class PetController {
     }
     
     // Check if a proposed position collides with any rigid window
-    private func checkCollision(at position: SCNVector3) -> Bool {
+    // Returns the Window ID if collision detected, nil otherwise
+    private func checkCollision(at position: SCNVector3) -> Int? {
         // Simple AABB Check against all window nodes
         // Character approximation: Box 40x80 centered at position
         let charWidth: CGFloat = 40 * CGFloat(characterNode.scale.x)
@@ -216,7 +220,7 @@ class PetController {
         let charMinY = position.y
         let charMaxY = position.y + charHeight
         
-        for node in windowNodes.values {
+        for (id, node) in windowNodes {
             guard let box = node.geometry as? SCNBox else { continue }
             // Node position is center
             let boxW = box.width
@@ -233,10 +237,10 @@ class PetController {
             // Intersection Check
             if charMaxX > boxMinX + buffer && charMinX < boxMaxX - buffer &&
                charMaxY > boxMinY + buffer && charMinY < boxMaxY - buffer {
-                return true // Collision detected
+                return id // Collision detected with window ID
             }
         }
-        return false
+        return nil
     }
     
     private var worldSize: CGSize = .zero
@@ -335,9 +339,48 @@ class PetController {
         
         // Edge Detection - Check if character walked off window top
         // This must run EVERY frame, not just when moving
+        // Edge Detection - Check if character walked off window top
+        // This must run EVERY frame, not just when moving
         if isOnWindowTop, let window = currentSupportWindow {
+            // 1. Poll for Window Movement
+            if time - lastWindowPollTime > windowPollInterval {
+                lastWindowPollTime = time
+                
+                let winID = window.id
+                // Use a dedicated serial queue or check if we are already polling?
+                // For simplicity, just dispatch. Throttling handles overload.
+                DispatchQueue.global(qos: .userInteractive).async {
+                    if let newWindow = YabaiAutomation.shared.getWindow(id: winID) {
+                        DispatchQueue.main.async { [weak self] in
+                            guard let self = self, self.isOnWindowTop, 
+                                  self.currentSupportWindow?.id == winID,
+                                  let lastFrame = self.lastSupportWindowFrame else { return }
+                            
+                            // Check for movement
+                            let dx = newWindow.frame.x - lastFrame.x
+                            let dy = newWindow.frame.y - lastFrame.y
+                            
+                            if dx != 0 || dy != 0 {
+                                // Apply delta to character
+                                // Note: Yabai Y+ is Down, SceneKit Y+ is Up.
+                                // If window moves DOWN (+dy), Character should move DOWN (-dy)
+                                self.characterNode.position.x += dx
+                                self.characterNode.position.y -= dy
+                                
+                                // Update tracking
+                                self.lastSupportWindowFrame = newWindow.frame
+                                // Update current window reference so edge detection uses new frame
+                                self.currentSupportWindow = newWindow 
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 2. Edge Detection (use updated window frame if available)
+            // We use the latest known frame from currentSupportWindow
             let currentX = characterNode.position.x
-            let winX = window.frame.x
+            let winX = window.frame.x // This might be slightly stale if poll hasn't returned yet, but that's acceptable
             let winW = window.frame.w
             
             // Allow small buffer
@@ -572,16 +615,43 @@ class PetController {
             let nextX = characterNode.position.x + moveDistance * (dx > 0 ? 1 : -1)
             let proposedPosition = SCNVector3(nextX, characterNode.position.y, characterNode.position.z)
             
-            if !checkCollision(at: proposedPosition) {
+            if checkCollision(at: proposedPosition) == nil {
                 if moveDistance < abs(dx) {
                     characterNode.position.x += moveDistance * (dx > 0 ? 1 : -1)
                 } else {
                     // Arrived
                     characterNode.position.x = targetX
                 }
-            } else {
+            } else if let hitWindowID = checkCollision(at: proposedPosition) {
                 // Blocked by rigid body
-                // Could handle stop animation here
+                // Check if we should start climbing this window!
+                if let window = visibleWindows.first(where: { $0.id == hitWindowID }) {
+                    // We hit a window. Are we facing it?
+                    // dx > 0 means moving right. If we hit something, it must be to our right.
+                    // dx < 0 means moving left. If we hit something, it must be to our left.
+                    
+                    // Trigger climb!
+                    // Determine which side we are on relative to the window CENTER
+                    // This helps deciding facingRight logic
+                    // Actually, if we are moving RIGHT (dx > 0), we are hitting the LEFT side of the window.
+                    // If we are moving LEFT (dx < 0), we are hitting the RIGHT side of the window.
+                    
+                    let facingRight = dx > 0 // We face right to climb the left edge of the window
+                    
+                    // Double check we are actually at the edge
+                    let winX = window.frame.x
+                    let winW = window.frame.w
+                    
+                    // Simple validation: If moving right, we should be near winX
+                    // If moving left, we should be near winX + winW
+                    
+                    // Only start climbing if we are NOT already climbing and have stamina
+                    if !isClimbing && climbingStamina > 10 {
+                         startClimbing(window: window, facingRight: facingRight) {
+                             // completion
+                         }
+                    }
+                }
             }
             
             // Clamp to world bounds
@@ -1092,7 +1162,9 @@ class PetController {
         currentSupportWindow = window
         
         // Orient towards the wall (Inside -> Facing Edge)
-        characterNode.eulerAngles.y = facingRight ? -.pi / 2 : .pi / 2
+        // If we are facing right (moving right), we want to KEEP facing right (pi/2) to hit the wall
+        // If we are facing left (moving left), we want to KEEP facing left (-pi/2) to hit the wall
+        characterNode.eulerAngles.y = facingRight ? .pi / 2 : -.pi / 2
         
         // Calculate window edge X position with alignment offset
         // If facing right (Left Edge of window), we want to be inside (to the right of edge)
@@ -1105,7 +1177,12 @@ class PetController {
         
         // Move character to window edge first (if not already there)
         let targetPosition = SCNVector3(windowEdgeX, characterNode.position.y, characterNode.position.z)
-        let moveToEdge = SCNAction.move(to: targetPosition, duration: 0.2)
+        let distance = abs(characterNode.position.x - windowEdgeX)
+        // Calculate duration based on distance to be snappy (using 2x run speed approx 1000pts/sec)
+        // If very close (< 2 pts), make it instant. Max duration 0.2s to avoid slowness if far.
+        let duration = distance < 2.0 ? 0.0 : min(0.2, TimeInterval(distance / 1000.0))
+        
+        let moveToEdge = SCNAction.move(to: targetPosition, duration: duration)
         moveToEdge.timingMode = .easeOut
         
         characterNode.runAction(moveToEdge) { [weak self] in
@@ -1127,29 +1204,27 @@ class PetController {
                 return
             }
             
-            // Start climb animation with overlap
-            self.climbingAnimation?.startClimb(overlap: 0.2) { [weak self] in
-                guard let self = self, self.isClimbing else { return }
-                
-                // FLIP DIRECTION for the loop phase
-                // User requirement: "flip the character like its climbing left caing to do right facing"
-                // Meaning when climbing, it should face the OPPOSITE way it started.
-                // Start: Face Wall -> Loop: Face Away (or vice versa depending on asset)
-                // We flip 180 degrees from the start direction.
-                
-                let currentYAngle = self.characterNode.eulerAngles.y
-                // self.characterNode.eulerAngles.y = currentYAngle + .pi
-                
-                self.climbingAnimation?.startLoop()
-                
-                // Simple climb action - just move up
-                let duration = TimeInterval(climbDistance / PetConfig.climbSpeed)
-                let climbAction = SCNAction.moveBy(x: 0, y: climbDistance, z: 0, duration: duration)
-                climbAction.timingMode = .linear
-                
-                self.characterNode.runAction(climbAction) {
-                    self.stopClimbing(completion: completion)
-                }
+            // DIRECTLY start climbing loop and movement (Skip startClimb wait)
+            // The "start" animation file is now same as loop, so waiting for it effectively
+            // pauses the character in place for one cycle. We skip that to allow continuous movement.
+            
+            // FLIP DIRECTION for the loop phase
+            // User requirement: "flip the character like its climbing left caing to do right facing"
+            // Start: Face Wall -> Loop: Face Away (or vice versa depending on asset)
+            // We flip 180 degrees from the start direction.
+            
+            let currentYAngle = self.characterNode.eulerAngles.y
+            self.characterNode.eulerAngles.y = currentYAngle + .pi
+            
+            self.climbingAnimation?.startLoop()
+            
+            // Simple climb action - just move up
+            let duration = TimeInterval(climbDistance / PetConfig.climbSpeed)
+            let climbAction = SCNAction.moveBy(x: 0, y: climbDistance, z: 0, duration: duration)
+            climbAction.timingMode = .linear
+            
+            self.characterNode.runAction(climbAction) {
+                self.stopClimbing(completion: completion)
             }
         }
     }
@@ -1200,6 +1275,9 @@ class PetController {
                    let screenHeight = self.currentScreenSize.height > 0 ? self.currentScreenSize.height : (NSScreen.main?.frame.height ?? 1080)
                    self.characterNode.position.y = screenHeight - win.frame.y
                    self.characterNode.position.x = targetX
+                   
+                   // Initialize tracking frame
+                   self.lastSupportWindowFrame = win.frame
             }
             
             completion()
@@ -1214,6 +1292,7 @@ class PetController {
         
         isOnWindowTop = false
         currentSupportWindow = nil
+        lastSupportWindowFrame = nil
         isFalling = true
         verticalVelocity = 0.0 // Reset velocity
         
@@ -1278,19 +1357,54 @@ class PetController {
         }
         
         // Calculate climbing speed based on physics
-        let climbSpeed = ClimbingPhysics.calculateSpeed(
+        let maxClimbSpeed = ClimbingPhysics.calculateSpeed(
             stamina: climbingStamina,
             heightClimbed: currentClimbHeight,
             totalHeight: totalClimbHeight,
             state: climbingState
         )
         
-        // Update animation speed to match physics
-        let speedMultiplier = Float(climbSpeed / PetConfig.climbSpeed)
-        climbingAnimation?.updateClimbSpeed(multiplier: speedMultiplier)
+        // MOUSE FOLLOWING LOGIC (Vertical)
+        // Get mouse position relative to window bottom (our coordinate system)
+        let mouseLoc = NSEvent.mouseLocation
+        // We need to compare mouse Y to character Y
+        // Simply: Target Y is mouseLoc.y
+        // But we clamp it to the window range
         
-        // Calculate movement for this frame
-        let verticalMovement = climbSpeed * CGFloat(deltaTime)
+        let targetY = mouseLoc.y
+        let currentY = characterNode.position.y
+        
+        // Calculate desired movement
+        let dy = targetY - currentY
+        
+        // Apply deadzone
+        var verticalMovement: CGFloat = 0
+        if abs(dy) > 10.0 { // Small deadzone
+             // Determine direction
+             let direction: CGFloat = dy > 0 ? 1 : -1
+             
+             // Move towards mouse, capped by maxClimbSpeed
+             let moveDist = min(abs(dy), maxClimbSpeed * CGFloat(deltaTime))
+             verticalMovement = moveDist * direction
+        }
+        
+        // Update animation speed to match ACTUAL movement
+        // If moving up, positive speed. If moving down, negative speed.
+        // If stationary, 0.
+        let speedMultiplier = Float(verticalMovement / (PetConfig.climbSpeed * CGFloat(deltaTime)))
+        // We might want to clamp this to avoid crazy animation speeds if lag occurs, but typical ranges are fine.
+        // Identify "stopped" vs "moving"
+        if abs(verticalMovement) < 0.001 {
+             climbingAnimation?.updateClimbSpeed(multiplier: 0)
+        } else {
+             // Use absolute value for speed magnitude, or keep sign?
+             // Animation usually plays forward for up.
+             // If we go down, we might want to play backward? 
+             // Standard `climbingAnimation` might expect positive multiplier.
+             // Let's assume positive for now, or check Animation class capabilities.
+             // Actually, usually backward playback needs negative speed.
+             climbingAnimation?.updateClimbSpeed(multiplier: speedMultiplier)
+        }
         
         // Add horizontal sway for realism
         let timeClimbing = time - climbingStartTime
@@ -1308,14 +1422,33 @@ class PetController {
             // Apply subtle sway relative to base X position
             characterNode.position.x = climbingBaseX + sway
             
+            // Update climb height reference
+            // currentClimbHeight should be relative to START of climb?
+            // Actually `currentClimbHeight` tracks how far up the window we are.
+            // Let's recalculate it based on Y position relative to window bottom?
+            // Or just accumulate? Accumulating matches previous logic.
             currentClimbHeight += verticalMovement
         }
         
         // Check if reached top (with small buffer for floating point errors)
         if currentClimbHeight >= totalClimbHeight * 0.95 || progress >= 0.95 {
-            stopClimbing {
-                // Climbing complete
-            }
+             // Only auto-finish if we are moving UP
+             if verticalMovement > 0 {
+                stopClimbing {
+                    // Climbing complete
+                }
+             }
+        }
+        
+        // Check if reached bottom (abort climb)
+        if currentClimbHeight <= 0 {
+             // Fell off bottom / User went down
+             isClimbing = false
+             currentSupportWindow = nil
+             // Reset to ground or whatever
+             characterNode.position.y = 0 // Or just let gravity take over next frame if we set isFalling?
+             // Let's just exit climb state cleanly
+             climbingAnimation?.stopLoop()
         }
     }
     
