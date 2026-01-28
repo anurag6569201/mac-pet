@@ -1282,6 +1282,7 @@ class PetController {
         isClimbing = true
         isFalling = false
         isSafetyJumping = false
+        isOnWindowTop = false // Critical: We are on the wall, not the top
         verticalVelocity = 0.0
         currentSupportWindow = window
         
@@ -1320,6 +1321,9 @@ class PetController {
             // Calculate effective climb distance, stopping short for the pull-up animation
             // This prevents the character from climbing with feet all the way to the top
             let climbDistance = windowTopY - currentY - PetConfig.climbingPullUpOffset
+            
+            // Set total height for physics calculations
+            self.totalClimbHeight = climbDistance
             
             // Safety check
             guard climbDistance > 0 else {
@@ -1502,6 +1506,10 @@ class PetController {
             transitionClimbingState(to: newState)
         }
         
+        // Multi-window climbing: Check for overlapping windows
+        checkForClimbingTransition()
+
+        
         // Calculate climbing speed based on physics
         let maxClimbSpeed = ClimbingPhysics.calculateSpeed(
             stamina: climbingStamina,
@@ -1682,6 +1690,60 @@ class PetController {
         if !isClimbing && !isFalling {
             climbingStamina += PetConfig.staminaRecoveryRate * Float(deltaTime)
             climbingStamina = min(PetConfig.maxStamina, climbingStamina)
+        }
+    }
+    
+    /// Checks if the pet should transition to a different overlapping window while climbing
+    private func checkForClimbingTransition() {
+        guard isClimbing, let currentWindow = currentSupportWindow else { return }
+        
+        let position = characterNode.position
+        
+        // Iterate through visible windows to find a better support
+        // visibleWindows is sorted by z-order (0 is top)
+        for window in visibleWindows {
+            // Stop if we reach current (only transition to windows in front)
+            if window.id == currentWindow.id { return }
+            
+            // Skip hollow/invalid (must be rigid surface)
+            guard let node = windowNodes[window.id],
+                  node.physicsBody?.type == .static else { continue }
+            
+            // Get bounds
+            let winFrame = window.frame
+            let screenHeight = currentScreenSize.height > 0 ? currentScreenSize.height : (NSScreen.main?.frame.height ?? 1080)
+            let winBottomY = screenHeight - (winFrame.y + winFrame.h)
+            let winTopY = screenHeight - winFrame.y
+            let winLeft = winFrame.x
+            let winRight = winFrame.x + winFrame.w
+            
+            // Check vertical overlap first
+            if position.y > winBottomY && position.y < winTopY {
+                // Check distance to edges
+                let distLeft = abs(position.x - winLeft)
+                let distRight = abs(position.x - winRight)
+                let minEdgeDist = min(distLeft, distRight)
+                
+                // Only transition if we are close enough to an edge to grab it
+                let transitionReach: CGFloat = 40.0
+                
+                if minEdgeDist < transitionReach {
+                    // Transition!
+                    let newFacingRight = distLeft < distRight
+                    
+                    print("Climb Transition: Window \(currentWindow.id) -> \(window.id)")
+                    
+                    // Force restart climbing on the new window
+                    // We momentarily disable isClimbing to bypass the guard in startClimbing
+                    self.isClimbing = false
+                    
+                    self.startClimbing(window: window, facingRight: newFacingRight) {
+                         // Completion block
+                    }
+                    
+                    return // Stop
+                }
+            }
         }
     }
     
