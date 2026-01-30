@@ -22,6 +22,7 @@ struct PetConfig {
     static let climbSpeedMax: CGFloat = 100.0 // Maximum speed when fresh
     static let climbAcceleration: CGFloat = 10.0 // Speed increase per second
     static let climbDeceleration: CGFloat = 15.0 // Speed decrease per second
+    static let ropeClimbSpeed: CGFloat = 65.0 // Specific speed for rope climbing
     
     // MARK: - Stamina System
     static let maxStamina: Float = 100.0 // Maximum stamina

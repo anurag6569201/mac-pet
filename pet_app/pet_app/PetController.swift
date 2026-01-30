@@ -19,6 +19,7 @@ class PetController {
     private var yawnAnimation: YawnAnimation?
     private var jumpOverAnimation: JumpOverAnimation?
     private var climbingAnimation: ClimbingAnimation?
+    private var climbingRopeAnimation: ClimbingRopeAnimation?
     
     // Mouse Behavior Animations (PRIORITY 2)
     private var angryEmotionAnimation: AngryEmotionAnimation?
@@ -34,6 +35,7 @@ class PetController {
     private var isSlowRunning = false
     private var isJumping = false
     private var isClimbing = false
+    private var isClimbingRope = false
     private var isOnWindowTop = false
     private var isSafetyJumping = false
 
@@ -536,7 +538,7 @@ class PetController {
             // STRICT PRIORITY CHECK: If Climbing or Falling, IGNORE horizontal movement requests
             // This prevents "stuck at mid" issues where walk animation tries to override climb animation
             // EXCEPTION: Allow movement if Safety Jumping
-            guard !isClimbing && (!isFalling || isSafetyJumping) else {
+            guard !isClimbing && !isClimbingRope && (!isFalling || isSafetyJumping) else {
                 return
             }
             
@@ -702,6 +704,12 @@ class PetController {
                 }
             }
             
+            // Rope Climbing Trigger Logic
+            // Check if there is a window directly above us within reach
+            if !isClimbing && !isClimbingRope && !isJumping && !isFalling {
+                checkForOverheadWindow()
+            }
+            
             // Clamp to world bounds
             if worldSize.width > 0 {
                 characterNode.position.x = max(0, min(characterNode.position.x, worldSize.width))
@@ -718,7 +726,7 @@ class PetController {
             if isJumping { jumpOverAnimation?.stop(); isJumping = false }
             
             // Double-check: If any movement animation is still active or falling, don't play other animations
-            if isWalking || isRunning || isSlowRunning || isJumping || isClimbing || isFalling {
+            if isWalking || isRunning || isSlowRunning || isJumping || isClimbing || isClimbingRope || isFalling {
                 return
             }
             
@@ -778,7 +786,7 @@ class PetController {
                     guard let self = self else { return }
                     
                     // STRICT PRIORITY CHECK: Don't start animation if movement started during rotation
-                    guard !self.isWalking && !self.isRunning && !self.isSlowRunning && !self.isJumping && !self.isClimbing && !self.isFalling else {
+                    guard !self.isWalking && !self.isRunning && !self.isSlowRunning && !self.isJumping && !self.isClimbing && !self.isClimbingRope && !self.isFalling else {
                         self.isPerformingLongIdle = false
                         return
                     }
@@ -795,7 +803,7 @@ class PetController {
                     // Return to idle breathing after animation completes (estimate 3 seconds)
                     DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
                         // STRICT PRIORITY CHECK: Don't restart idle if movement started
-                        guard !self.isWalking && !self.isRunning && !self.isSlowRunning && !self.isJumping && !self.isClimbing && !self.isFalling else {
+                        guard !self.isWalking && !self.isRunning && !self.isSlowRunning && !self.isJumping && !self.isClimbing && !self.isClimbingRope && !self.isFalling else {
                             self.isPerformingLongIdle = false
                             return
                         }
@@ -1191,6 +1199,7 @@ class PetController {
         
         // Climbing Animation
         climbingAnimation = ClimbingAnimation.setup(for: characterNode)
+        climbingRopeAnimation = ClimbingRopeAnimation.setup(for: characterNode)
     }
     
     private func startSequence(size: CGSize) {
@@ -1336,6 +1345,104 @@ class PetController {
             }
             
             completion()
+        }
+    }
+    
+    // MARK: - Rope Climbing Logic
+    
+    func checkForOverheadWindow() {
+        // Look for windows that are above the character
+        let charTopY = characterNode.position.y  // Approx top of head
+        let charX = characterNode.position.x
+        
+        let reachDistance: CGFloat = 400.0 // How far up we can reach/throw rope
+        
+        for window in visibleWindows {
+            // Check Horizontal Alignment
+            let winX = window.frame.x
+            let winW = window.frame.w
+            
+            // Allow climbing if we are substantially under the window
+            if charX > winX + 20 && charX < winX + winW - 20 {
+                
+                // Check Vertical Alignment
+                let screenHeight = currentScreenSize.height > 0 ? currentScreenSize.height : (NSScreen.main?.frame.height ?? 1080)
+                
+                // SceneKit Y for window BOTTOM
+                // Window Top Y = screenHeight - window.frame.y
+                // Window Bottom Y = Window Top Y - window.frame.h
+                // Wait, Yabai coord: y is top-left.
+                // SceneKit coord: y=0 is bottom-left.
+                // win.frame.y is dist from top of screen to top of window.
+                // So top of window in SCN is screenHeight - win.frame.y
+                // Bottom of window in SCN is screenHeight - (win.frame.y + win.frame.h)
+                
+                let winBottomY = screenHeight - (window.frame.y + window.frame.h)
+                
+                // Check if window is above character
+                if winBottomY > charTopY {
+                     let distance = winBottomY - charTopY
+                     if distance < reachDistance {
+                         // Found a target!
+                         startRopeClimbing(window: window, targetY: winBottomY)
+                         return
+                     }
+                }
+            }
+        }
+    }
+    
+    func startRopeClimbing(window: YabaiWindow, targetY: CGFloat) {
+        guard !isClimbingRope else { return }
+        
+        stopAllIdleAnimations()
+        stopAllMouseBehaviors()
+        
+        isClimbingRope = true
+        isFalling = false
+        isSafetyJumping = false
+        isOnWindowTop = false
+        currentSupportWindow = window
+        
+        // 1. Play Animation
+        climbingRopeAnimation?.startClimb()
+        
+        // 2. Move Up
+        // Target: Top of window (to land on it)
+        // Note: targetY passed in was the BOTTOM of the window.
+        // We usually want to climb to the TOP.
+        // If the window is very tall, rope climbing to top might take long.
+        // But logic says "climb by rope... window is above".
+        // Usually we land on TOP of the window.
+        
+        let screenHeight = currentScreenSize.height > 0 ? currentScreenSize.height : (NSScreen.main?.frame.height ?? 1080)
+        let winTopY = screenHeight - window.frame.y
+        
+        let climbDistance = winTopY - characterNode.position.y
+        let duration = TimeInterval(climbDistance / PetConfig.ropeClimbSpeed)
+        
+        let moveAction = SCNAction.moveBy(x: 0, y: climbDistance, z: 0, duration: duration)
+        moveAction.timingMode = .linear
+        
+        characterNode.runAction(moveAction) { [weak self] in
+            self?.stopRopeClimbing()
+        }
+    }
+    
+    func stopRopeClimbing() {
+        guard isClimbingRope else { return }
+        
+        characterNode.removeAllActions()
+        climbingRopeAnimation?.stopClimb()
+        
+        isClimbingRope = false
+        isOnWindowTop = true
+        
+        if let win = currentSupportWindow {
+             lastSupportWindowFrame = win.frame
+             // Ensure Y is exact
+             let screenHeight = currentScreenSize.height > 0 ? currentScreenSize.height : (NSScreen.main?.frame.height ?? 1080)
+             characterNode.position.y = screenHeight - win.frame.y
         }
     }
     
@@ -1614,7 +1721,7 @@ class PetController {
     
     /// Recover stamina when on ground or window top
     private func recoverStamina(deltaTime: TimeInterval) {
-        if !isClimbing && !isFalling {
+        if !isClimbing && !isClimbingRope && !isFalling {
             // Climbing trigger removed per user request
             climbingStamina = min(PetConfig.maxStamina, climbingStamina)
         }
