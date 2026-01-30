@@ -555,82 +555,9 @@ class PetController {
             
             let distance = abs(dx)
             
-            // Climbing Trigger Logic
-            // Check if mouse is near any window edge
-            if !isClimbing && !isJumping && !isOnWindowTop && !isFalling {
-                // Determine if we are near a window edge
-                for window in visibleWindows {
-                    // Check if window is on the same screen (approximate check using frame)
-                    // We need to convert window frame (global coordinates, usually) to our coordinate system
-                    // Yabai returns global coordinates where (0,0) is top-left of main screen.
-                    // Accessing `window.frame`
-                    
-                    // Simple X check: is mouse near window left/right edge?
-                    // And is mouse vertical position within window vertical range?
-                    // In Cocoa, Y is bottom-up. Yabai usually returns top-down Y.
-                    // Need to be careful with Y coordinates.
-                    // Let's rely on X for now to trigger climbing UP the side.
-                    
-                    let winX = window.frame.x
-                    let winW = window.frame.w
-                    let winY = window.frame.y
-                    let winH = window.frame.h
-                    
-                    let leftEdge = winX
-                    let rightEdge = winX + winW
-                    
-                    // Check if mouse is near left or right edge
-                    let nearLeft = abs(mouseLoc.x - leftEdge) < PetConfig.climbingTriggerDistance
-                    let nearRight = abs(mouseLoc.x - rightEdge) < PetConfig.climbingTriggerDistance
-                    
-                    if nearLeft || nearRight {
-                        // Check if mouse is vertically within window range
-                        // Convert window Y (top-down) to our Y (bottom-up)
-                        // screenSize.height is total screen height
-                        // window.frame.y is distance from top of screen
-                        // So bottom of window in our coords is: screenSize.height - (window.frame.y + window.frame.h)
-                        // Top of window in our coords is: screenSize.height - window.frame.y
-                        
-                        let screenHeight = screenSize.height > 0 ? screenSize.height : (NSScreen.main?.frame.height ?? 1080)
-                        let windowBottomY = screenHeight - (winY + winH)
-                        let windowTopY = screenHeight - winY
-                        
-                        // Check if mouse Y is within window vertical range (with some buffer)
-                        let buffer: CGFloat = 50.0
-                        if mouseLoc.y >= windowBottomY - buffer && mouseLoc.y <= windowTopY + buffer {
-                            // We are near a climbable edge!
-                            // Determine which edge
-                            let facingRight = nearLeft
-                            
-                            // Prevent climbing at screen edges
-                            guard let screen = NSScreen.main else { continue }
-                            let screenFrame = screen.frame
-                            
-                            // Check if this window edge is at a screen edge
-                            let windowEdgeX = facingRight ? leftEdge : rightEdge
-                            let isAtScreenEdge = (abs(windowEdgeX - screenFrame.minX) < 5) || (abs(windowEdgeX - screenFrame.maxX) < 5)
-                            
-                            if isAtScreenEdge {
-                                continue // Skip this edge
-                            }
-                            
-                            // SAFETY CHECK: Only start climbing if character is actually NEAR the edge
-                            // otherwise, let them walk/run to it naturally first
-                            let distToEdge = abs(characterNode.position.x - windowEdgeX)
-                            if distToEdge > 50.0 {
-                                continue // Too far, keep walking/running
-                            }
-                            
-                            // Start climbing!
-                            startClimbing(window: window, facingRight: facingRight) {
-                                // Completion: character is now on top of window
-                                // No need to do anything here, state is managed in stopClimbing
-                            }
-                            break
-                        }
-                    }
-                }
-            }
+            // Climbing Trigger Logic - REMOVED (User preferred collision-only climbing)
+            // Previously checked if mouse is near any window edge to start climbing.
+            // Now relying on collision detection to trigger climbing.
             
             // Jump Logic: 
             // 1. If already jumping, check if we finished the jump (moved past boundary + prepare dist)
@@ -1688,7 +1615,7 @@ class PetController {
     /// Recover stamina when on ground or window top
     private func recoverStamina(deltaTime: TimeInterval) {
         if !isClimbing && !isFalling {
-            climbingStamina += PetConfig.staminaRecoveryRate * Float(deltaTime)
+            // Climbing trigger removed per user request
             climbingStamina = min(PetConfig.maxStamina, climbingStamina)
         }
     }
