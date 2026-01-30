@@ -81,6 +81,7 @@ struct PetConfig {
     static let climbingStartAnimationFile = "climbing/climbing-mid.dae"
     static let climbingMidAnimationFile = "climbing/climbing-mid.dae"
     static let climbingEndAnimationFile = "climbing/climbing-end.dae"
+    static let climbingRopeModel = "climbing/climbing-rope.dae"
     
     // Mouse Behavior Animation Files
     static let angryEmotionAnimationFile = "mouse_behavior/angry-emotion.dae"
@@ -128,8 +129,8 @@ struct PetConfig {
     
     // MARK: - Mouse Following Settings
     static let mouseDeadZoneRadius: CGFloat = 1.0 // Minimum distance before pet starts moving
-    static let climbingTriggerDistance: CGFloat = 5.0 // Distance from window edge to trigger climb (pixel-perfect)
-    static let climbingAlignmentOffset: CGFloat = 5.0 // Distance from window edge to center of character (visual alignment)
+    static let climbingTriggerDistance: CGFloat = 0.0 // Distance from window edge to trigger climb (pixel-perfect)
+    static let climbingAlignmentOffset: CGFloat = 0.0 // Distance from window edge to center of character (visual alignment)
     static let climbingPullUpOffset: CGFloat = 130.0 // Vertical offset from top to start pull-up (avoids overshoot)
 }
 
