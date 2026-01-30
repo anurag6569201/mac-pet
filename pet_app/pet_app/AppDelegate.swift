@@ -13,6 +13,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var keepOnTopTimer: Timer?
     
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Check Backend Status
+        NetworkManager.shared.checkBackendStatus { success, message in
+            print(" [Backend] Status check: \(success ? "Success" : "Failed") - \(message ?? "No message")")
+        }
+
         // Start Yabai verification sequence
         YabaiAutomation.shared.startVerification()
         
