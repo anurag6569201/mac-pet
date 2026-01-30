@@ -139,12 +139,18 @@ class PetController {
         var activeWindowIDs: Set<Int> = []
         
         for window in visibleWindows {
+            // Convert Y (Yabai Top-Left -> SceneKit Bottom-Left)
+            // Top of window in SceneKit coords = screenH - window.frame.y
+            let topY = screenH - window.frame.y
+            
             // Treat all windows as potentially walkable surfaces.
-            // If window is "HOLLOW" (Height > 75% of screen), we create a thin CAP at the top.
-            // This allows the pet to pass through the body but land on top.
-            // If "RIGID" (Normal), we act as a solid block.
-            let isHollow = window.frame.h > (screenH * 0.75)
-            let targetHeight = isHollow ? 20.0 : window.frame.h
+            // If window top is > 75% of screen height, we treat it as "HOLLOW" (Ignored).
+            // User requirement: "height > 75% should be hollow and dont even they should have any rigid top"
+            if topY > (screenH * 0.75) {
+                continue
+            }
+            
+            let targetHeight = window.frame.h
             
             activeWindowIDs.insert(window.id)
             
@@ -154,10 +160,8 @@ class PetController {
             // space index is 1-based, convert to 0-based index for virtual world slot
             let virtualX = CGFloat(window.space - 1) * screenW + localX
             
-            // Convert Y (Yabai Top-Left -> SceneKit Bottom-Left)
-            // Top of window in SceneKit coords = screenH - window.frame.y
             // Center Y of the node = Top - (targetHeight / 2)
-            let topY = screenH - window.frame.y
+            // topY already calculated above
             let centerY = topY - (targetHeight / 2)
             let centerX = virtualX + window.frame.w / 2
             
@@ -575,7 +579,15 @@ class PetController {
                 // Jump zone is [boundaryX - prepareDist, boundaryX + prepareDist]
                 // But we mainly care about target side.
                 
-                if distToBoundary < PetConfig.jumpPrepareDistance + 50 { // Add buffer to ensure we land cleanly
+                // Calculate scaled prepare distance
+                let scaledPrepareDistance = PetConfig.jumpPrepareDistance * scaleFactor
+                let scaledBuffer: CGFloat = 50.0 * scaleFactor
+                
+                // Disable jumping for very large characters (scale > 2.0)
+                if scaleFactor > 2.0 {
+                    shouldBeJumping = false
+                    activeJumpBoundaryX = nil
+                } else if distToBoundary < scaledPrepareDistance + scaledBuffer { // Add scaled buffer to ensure we land cleanly
                      shouldBeJumping = true
                 } else {
                      // We landed
@@ -593,8 +605,11 @@ class PetController {
                 
                 let distToBoundary = abs(boundaryX - currentX)
                 
-                // Only jump if we are close to the edge
-                if distToBoundary < PetConfig.jumpPrepareDistance {
+                // Calculate scaled prepare distance
+                let scaledPrepareDistance = PetConfig.jumpPrepareDistance * scaleFactor
+                
+                // Only jump if we are close to the edge AND not too big
+                if scaleFactor <= 2.0 && distToBoundary < scaledPrepareDistance {
                     shouldBeJumping = true
                     activeJumpBoundaryX = boundaryX
                 }
@@ -1227,10 +1242,13 @@ class PetController {
         // If we are facing left (moving left), we want to KEEP facing left (-pi/2) to hit the wall
         characterNode.eulerAngles.y = facingRight ? .pi / 2 : -.pi / 2
         
+        let scaleFactor = CGFloat(characterNode.scale.x)
+        
         // Calculate window edge X position with alignment offset
         // If facing right (Left Edge of window), we want to be inside (to the right of edge)
         // If facing left (Right Edge of window), we want to be inside (to the left of edge)
-        let offset = facingRight ? PetConfig.climbingAlignmentOffset : -PetConfig.climbingAlignmentOffset
+        let scaledAlignmentOffset = PetConfig.climbingAlignmentOffset * scaleFactor
+        let offset = facingRight ? scaledAlignmentOffset : -scaledAlignmentOffset
         let windowEdgeX = (facingRight ? window.frame.x : (window.frame.x + window.frame.w)) + offset
         
         // Store base X for sway calculations
@@ -1254,9 +1272,12 @@ class PetController {
             let windowTopY = screenHeight - window.frame.y
             let currentY = self.characterNode.position.y
             
+            let scaleFactor = CGFloat(self.characterNode.scale.x)
+            let scaledPullUpOffset = PetConfig.climbingPullUpOffset * scaleFactor
+            
             // Calculate effective climb distance, stopping short for the pull-up animation
             // This prevents the character from climbing with feet all the way to the top
-            let climbDistance = windowTopY - currentY - PetConfig.climbingPullUpOffset
+            let climbDistance = windowTopY - currentY - scaledPullUpOffset
             
             // Set total height for physics calculations
             self.totalClimbHeight = climbDistance
@@ -1283,8 +1304,10 @@ class PetController {
             self.climbingAnimation?.startLoop()
             
             // Simple climb action - just move up
-            let duration = TimeInterval(climbDistance / PetConfig.climbSpeed)
-            let climbAction = SCNAction.moveBy(x: 0, y: climbDistance, z: 0, duration: duration)
+            let physicsScale = sqrt(scaleFactor)
+            let scaledClimbSpeed = PetConfig.climbSpeed * physicsScale
+            let duration = TimeInterval(climbDistance / scaledClimbSpeed)
+            let climbAction = SCNAction.moveBy(x: 0, y: climbDistance - (48.5*scaleFactor), z: 0, duration: duration)
             climbAction.timingMode = .linear
             
             self.characterNode.runAction(climbAction) {
@@ -1304,8 +1327,10 @@ class PetController {
         let winCenter = window.frame.x + (window.frame.w / 2)
         let isLeftEdge = climbingBaseX < winCenter
         
+        let scaleFactor = CGFloat(characterNode.scale.x)
+        
         // Target: move slightly inside the window to avoid immediately falling off
-        let safeBuffer: CGFloat = 30.0
+        let safeBuffer: CGFloat = 30.0 * scaleFactor
         let targetX = isLeftEdge ? (window.frame.x + safeBuffer) : (window.frame.x + window.frame.w - safeBuffer)
         let moveDistanceX = targetX - characterNode.position.x
         
@@ -1355,15 +1380,18 @@ class PetController {
         let charTopY = characterNode.position.y  // Approx top of head
         let charX = characterNode.position.x
         
-        let reachDistance: CGFloat = 400.0 // How far up we can reach/throw rope
+        let scaleFactor = CGFloat(characterNode.scale.x)
+        let reachDistance: CGFloat = 400.0 * scaleFactor // How far up we can reach/throw rope
         
         for window in visibleWindows {
             // Check Horizontal Alignment
             let winX = window.frame.x
             let winW = window.frame.w
             
+            let buffer = 20.0 * scaleFactor
+            
             // Allow climbing if we are substantially under the window
-            if charX > winX + 20 && charX < winX + winW - 20 {
+            if charX > winX + buffer && charX < winX + winW - buffer {
                 
                 // Check Vertical Alignment
                 let screenHeight = currentScreenSize.height > 0 ? currentScreenSize.height : (NSScreen.main?.frame.height ?? 1080)
@@ -1419,7 +1447,12 @@ class PetController {
         let winTopY = screenHeight - window.frame.y
         
         let climbDistance = winTopY - characterNode.position.y
-        let duration = TimeInterval(climbDistance / PetConfig.ropeClimbSpeed)
+        
+        let scaleFactor = CGFloat(characterNode.scale.x)
+        let physicsScale = sqrt(scaleFactor)
+        let scaledRopeSpeed = PetConfig.ropeClimbSpeed * physicsScale
+        
+        let duration = TimeInterval(climbDistance / scaledRopeSpeed)
         
         let moveAction = SCNAction.moveBy(x: 0, y: climbDistance, z: 0, duration: duration)
         moveAction.timingMode = .linear
