@@ -173,4 +173,8 @@ struct ClimbingAnimation {
         stop(players: midPlayers)
         stop(players: endPlayers)
     }
+    
+    func stop() {
+        stopAll()
+    }
 }

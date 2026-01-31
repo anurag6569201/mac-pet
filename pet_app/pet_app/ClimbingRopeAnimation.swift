@@ -41,4 +41,8 @@ struct ClimbingRopeAnimation {
     private func stop(players: [SCNAnimationPlayer], blendOutDuration: TimeInterval = 0.1) {
         players.forEach { $0.stop(withBlendOutDuration: blendOutDuration) }
     }
+    
+    func stop() {
+        stopClimb()
+    }
 }
