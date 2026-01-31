@@ -1,0 +1,6 @@
+azure-core
+azure-identity
+python-dotenv
+pyaudio
+azure-ai-voicelive
+SpeechRecognition
